@@ -1,0 +1,1378 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bản đồ lô vườn</title>
+<meta name="theme-color" content="#0b7a53">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lô vườn">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<script src="config.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.css">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d2329; --muted: #66727d; --line: #dde3e8; --soft: #f3f6f8;
+    --accent: #0b7a53; --accent-fg: #ffffff; --warn: #b3541e; --err: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161b20; --fg: #e8edf1; --muted: #9aa6b1; --line: #2c343c; --soft: #1f262d;
+      --accent: #3ccf91; --accent-fg: #0b1a13; --warn: #f0a35e; --err: #ff7b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #login { position: fixed; inset: 0; z-index: 5000; background: var(--bg); display: flex; align-items: center;
+    justify-content: center; padding: 24px; }
+  #login[hidden] { display: none; }
+  #login form { width: 100%; max-width: 360px; display: grid; gap: 12px; }
+  #login h1 { margin: 0 0 4px; font-size: 22px; }
+  #login input { font: inherit; font-size: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--bg); color: var(--fg); }
+  #login button { min-height: 48px; font-size: 16px; }
+  #login .err { min-height: 1.2em; font-size: 14px; }
+  #login .logo { width: 64px; height: 64px; border-radius: 16px; }
+  .logout { border: 0; background: none; color: var(--accent); padding: 0; min-height: 0 !important; font-size: 13px; }
+  @media (max-width: 760px) {
+    #bar { padding-top: calc(8px + env(safe-area-inset-top)); }
+    #gps { top: calc(62px + env(safe-area-inset-top)); }
+    .leaflet-top { top: calc(56px + env(safe-area-inset-top)); }
+    #panel[data-state="full"] { height: calc(100dvh - 64px - env(safe-area-inset-top)); }
+  }
+  #app { display: grid; grid-template-columns: 1fr 400px; grid-template-rows: auto 1fr; height: 100vh; }
+  #bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px;
+    border-bottom: 1px solid var(--line); }
+  #q { flex: 1 1 200px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--fg); font: inherit; }
+  #chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--soft); color: var(--fg); cursor: pointer; font-size: 13px; }
+  .chip.off { opacity: .45; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.25); }
+  #map { min-height: 0; }
+  #panel { border-left: 1px solid var(--line); overflow: auto; padding: 12px 14px 24px; }
+  #btnMenu, #grab { display: none; }
+  #gps { position: absolute; z-index: 1000; left: 50%; transform: translateX(-50%); top: 10px; max-width: 92%;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
+    font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.25); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #gps[hidden] { display: none; }
+  #gps b { color: var(--accent); }
+  .locate a { font-size: 20px; line-height: 30px !important; }
+  .locate.on a { color: #1a73e8 !important; }
+  .locate.follow a { background: #1a73e8 !important; color: #fff !important; }
+  #mapWrap { position: relative; min-height: 0; }
+  #mapWrap #map { position: absolute; inset: 0; }
+
+  /* ---------- Điện thoại ---------- */
+  @media (max-width: 760px) {
+    #app { display: block; position: relative; height: 100vh; height: 100dvh; overflow: hidden; }
+    #mapWrap { position: absolute; inset: 0; }
+    #bar { position: absolute; top: 0; left: 0; right: 0; z-index: 1002; border: 0; padding: 8px;
+      background: transparent; pointer-events: none; }
+    #bar > * { pointer-events: auto; }
+    #q { flex: 1 1 auto; height: 44px; font-size: 16px; border-radius: 22px; padding: 0 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+    #btnMenu { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+      border-radius: 22px; padding: 0; font-size: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.25); background: var(--bg); }
+    #bar #chips, #bar .tool { display: none; }
+    #bar.open { background: var(--bg); box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+    #bar.open #chips { display: flex; flex-wrap: nowrap; overflow-x: auto; width: 100%; order: 3; padding-bottom: 2px; }
+    #bar.open .tool { display: inline-flex; order: 4; flex: 1; justify-content: center; min-height: 44px; }
+    .chip { padding: 8px 12px; flex: none; }
+    #busy { position: absolute; right: 64px; top: 22px; }
+    #gps { top: 62px; }
+    .leaflet-top { top: 56px; }
+    .leaflet-control-zoom { display: none; }
+    .leaflet-touch .leaflet-bar a { width: 44px; height: 44px; line-height: 44px !important; }
+    #panel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1001; border: 0; padding: 0 14px 0;
+      background: var(--bg); border-radius: 16px 16px 0 0; box-shadow: 0 -4px 16px rgba(0,0,0,.3);
+      height: 52vh; height: 52dvh; transition: height .2s ease; overflow: auto; overscroll-behavior: contain; }
+    #panel[data-state="peek"] { height: 96px; overflow: hidden; }
+    #panel[data-state="full"] { height: calc(100vh - 64px); height: calc(100dvh - 64px); }
+    #grab { display: block; position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 10px 0 6px;
+      margin: 0 -14px; text-align: center; cursor: grab; touch-action: none; }
+    #grab::before { content: ''; display: inline-block; width: 44px; height: 5px; border-radius: 3px; background: var(--line); }
+    #panelBody { padding-bottom: 16px; }
+    .field input[type=text], .field select, .field input[type=date] { font-size: 16px; min-height: 44px; }
+    button { min-height: 40px; }
+    button.link { min-height: 32px; }
+    .prog { padding: 10px 14px; }
+    .item { padding: 12px 4px; }
+    .actions { bottom: 0; padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); }
+    .actions button { flex: 1; min-height: 48px; }
+    .sheet { max-height: 85vh; }
+    .btxt { display: inline; }
+  }
+  @media (min-width: 761px) { .btxt.mob { display: none; } }
+  button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--soft); color: var(--fg); cursor: pointer; white-space: nowrap; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--err); }
+  button.link { border: 0; background: none; padding: 4px 0; color: var(--accent); }
+  h2 { margin: 6px 0 4px; font-size: 18px; }
+  h3 { margin: 18px 0 8px; font-size: 15px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .stats { background: var(--soft); border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px; }
+  .field { display: grid; gap: 3px; margin-bottom: 10px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input[type=text] { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit; width: 100%; }
+  .field input[readonly] { background: var(--soft); color: var(--muted); }
+  .field.check { display: flex; align-items: center; gap: 8px; }
+  .field.check label { font-size: 14px; color: var(--fg); }
+  .field.changed input[type=text] { border-color: var(--accent); }
+  .field select, .field input[type=date] { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit; width: 100%; }
+  .field.changed select, .field.changed input[type=date] { border-color: var(--accent); }
+  .field.bad input, .field.bad select { border-color: var(--err) !important; }
+  .field .req { color: var(--err); }
+  .field .fhint { font-size: 11px; color: var(--muted); }
+  .field .ferr { font-size: 12px; color: var(--err); }
+  .field .calc { padding: 7px 9px; border-radius: 6px; background: var(--soft); color: var(--muted); }
+  details.grp { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; margin: 10px 0; }
+  details.grp > summary { font-weight: 600; color: var(--fg); margin: 0; padding: 9px 0; list-style-position: inside; }
+  details.grp[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+  #checks { margin: 8px 0; }
+  .who { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .mainf { margin-top: 10px; }
+  .more-btn { width: 100%; margin: 6px 0 10px; background: var(--bg); color: var(--accent); font-weight: 600; }
+  .grp { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px 2px; margin: 10px 0; }
+  .grp-t { font-weight: 600; padding: 9px 0; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+  .plabel { background: none; border: 0; }
+  .plabel span { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; color: #fff; font: 600 12px/1.2 system-ui, sans-serif;
+    text-shadow: 0 0 3px #000, 0 0 2px #000, 0 1px 2px #000; pointer-events: none; }
+  #checks .ck { font-size: 13px; padding: 6px 9px; border-radius: 6px; margin-bottom: 5px; border-left: 4px solid; }
+  #checks .ck.err { border-color: var(--err); background: color-mix(in srgb, var(--err) 10%, transparent); color: var(--fg); }
+  #checks .ck.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+  #checks .ck.ok { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  #checks .ck.info { border-color: var(--line); background: var(--soft); color: var(--muted); }
+  .progs { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 12px; }
+  .prog { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--line);
+    border-radius: 8px; cursor: pointer; font-weight: 600; }
+  .prog input { width: 18px; height: 18px; margin: 0; }
+  .prog.changed { border-color: var(--accent); }
+  details summary { cursor: pointer; color: var(--accent); margin: 4px 0 10px; }
+  .actions { position: sticky; bottom: -24px; background: var(--bg); padding: 10px 0; display: flex; gap: 8px;
+    border-top: 1px solid var(--line); z-index: 2; }
+  .item { padding: 9px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .item:hover { background: var(--soft); }
+  .item b { display: block; }
+  .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; margin-right: 4px;
+    color: #10161b; font-weight: 600; }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px;
+    border: 1px solid currentColor; margin-left: 6px; font-weight: 400; }
+  .badge.warn { color: var(--warn); }
+  .badge.err { color: var(--err); }
+  .hint { font-size: 12px; color: var(--muted); background: var(--soft); padding: 8px; border-radius: 6px; }
+  .err { color: var(--err); }
+  a { color: var(--accent); }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-end;
+    justify-content: center; z-index: 2000; }
+  #modal[hidden] { display: none; }
+  .sheet { background: var(--bg); width: 100%; max-width: 900px; max-height: 72vh; border-radius: 12px 12px 0 0;
+    display: flex; flex-direction: column; }
+  .sheet header, .sheet footer { padding: 12px 14px; display: flex; gap: 8px; align-items: center; }
+  .sheet header { border-bottom: 1px solid var(--line); justify-content: space-between; }
+  .sheet footer { border-top: 1px solid var(--line); justify-content: flex-end; flex-wrap: wrap; }
+  .sheet .body { overflow: auto; padding: 0 14px 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  td input[type=text] { width: 100%; min-width: 110px; padding: 5px 7px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+  td.name { cursor: pointer; text-decoration: underline dotted; }
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: 90vw;
+    background: #222; color: #fff; padding: 10px 14px; border-radius: 8px; z-index: 3000; display: none; }
+  #busy { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 1s linear infinite; visibility: hidden; flex: none; }
+  #busy.on { visibility: visible; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <input id="q" type="search" placeholder="Tìm mã lô, mã hộ, tên, xã…">
+    <button id="btnMenu" title="Bộ lọc và công cụ">☰</button>
+    <div id="chips"></div>
+    <div id="busy"></div>
+    <button id="btnImport" class="tool" title="Nhập ranh giới từ file KML/KMZ">⬆ <span class="btxt">Nhập KML</span></button>
+    <button id="btnExport" class="tool" title="Xuất file GMR RA (.xlsx) và KML" hidden>⬇ <span class="btxt">Xuất RA</span></button>
+    <button id="btnReload" class="tool" title="Tải lại dữ liệu mới nhất">⟳ <span class="btxt mob">Tải lại</span></button>
+    <input id="file" type="file" accept=".kml,.kmz" hidden>
+  </div>
+  <div id="mapWrap"><div id="map"></div><div id="gps" hidden></div></div>
+  <aside id="panel" data-state="half"><div id="grab" title="Kéo lên / xuống"></div><div id="panelBody"><p class="muted">Đang tải dữ liệu…</p></div></aside>
+</div>
+
+<div id="modal" hidden>
+  <div class="sheet">
+    <header><b id="mTitle"></b><button class="link" id="mClose">Đóng</button></header>
+    <div class="body" id="mBody"></div>
+    <footer id="mFoot">
+      <span class="muted">Tick cho hộ mới:</span><span id="mProgs"></span>
+      <label class="muted"><input type="checkbox" id="mAllowNew" checked> Tạo lô mới nếu mã chưa có</label>
+      <button id="mCancel">Hủy</button>
+      <button id="mOk" class="primary">Nhập</button>
+    </footer>
+  </div>
+</div>
+<div id="toast"></div>
+<div id="login" hidden>
+  <form id="loginForm" autocomplete="on">
+    <img class="logo" src="icons/icon-192.png" alt="">
+    <h1>Bản đồ lô vườn</h1>
+    <div class="muted">Đăng nhập bằng email và mã PIN được cấp.</div>
+    <input id="lgEmail" type="email" name="email" autocomplete="username" placeholder="Email" required>
+    <input id="lgPin" type="password" name="pin" inputmode="numeric" autocomplete="current-password" placeholder="Mã PIN" required>
+    <button class="primary" id="lgBtn" type="submit">Đăng nhập</button>
+    <div class="err" id="lgErr"></div>
+  </form>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const FOCUS_ID = new URLSearchParams(location.search).get('lo') || '';
+
+// ---------- Trạng thái ----------
+let DATA = null;            // { ho:{headers, rows:{MaHo: farm}}, lo:{headers, rows:[plot]}, user, cfg }
+let C = null;               // DATA.cfg
+let byId = {};              // MaLo -> lô
+let layerById = {};
+let sel = null;
+let dirtyLo = {}, dirtyHo = {};
+let geomEdit = null, geomChanged = false, geomRemoved = false;
+let importLayer = null, importItems = [];
+let firstLoad = true;
+let filter = {};            // { RA: true, '4C': true, CP: true, none: true }
+
+const PROG_COLOR = { RA: '#4ade80', '4C': '#38bdf8', CP: '#c084fc' };
+const MULTI_COLOR = '#ffffff', NONE_COLOR = '#94a3b8', SEL_COLOR = '#ffd400', IMP_COLOR = '#ff7a00';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---------- Bản đồ ----------
+const map = L.map('map', { zoomControl: true }).setView([11.9, 108.3], 9);
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom: 19, attribution: 'Ảnh vệ tinh © Esri' }).addTo(map);
+const labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom: 19 }).addTo(map);
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+L.control.layers({ 'Vệ tinh': sat, 'Bản đồ đường': osm }, { 'Nhãn địa danh': labels }).addTo(map);
+L.control.scale({ imperial: false }).addTo(map);
+const plotGroup = L.featureGroup().addTo(map);
+map.pm.setGlobalOptions({ allowSelfIntersection: false, snappable: true, snapDistance: 15 });
+
+// ---------- Diện tích (giống Code.gs) ----------
+function ringArea(c) {
+  const R = 6378137, rad = d => d * Math.PI / 180, n = c.length;
+  let a = 0;
+  if (n > 2) {
+    for (let i = 0; i < n; i++) {
+      let lo, mi, up;
+      if (i === n - 2) { lo = n - 2; mi = n - 1; up = 0; }
+      else if (i === n - 1) { lo = n - 1; mi = 0; up = 1; }
+      else { lo = i; mi = i + 1; up = i + 2; }
+      a += (rad(c[up][0]) - rad(c[lo][0])) * Math.sin(rad(c[mi][1]));
+    }
+    a = a * R * R / 2;
+  }
+  return a;
+}
+function polyArea(rings) {
+  if (!rings || !rings.length) return 0;
+  let a = Math.abs(ringArea(rings[0]));
+  for (let i = 1; i < rings.length; i++) a -= Math.abs(ringArea(rings[i]));
+  return a;
+}
+function areaHa(g) {
+  if (!g) return 0;
+  const m2 = g.type === 'Polygon' ? polyArea(g.coordinates)
+    : g.type === 'MultiPolygon' ? g.coordinates.reduce((s, p) => s + polyArea(p), 0) : 0;
+  return m2 / 10000;
+}
+const fmtHa = x => x.toLocaleString('vi-VN', { maximumFractionDigits: 4 }) + ' ha';
+
+// ---------- Gọi Apps Script ----------
+const API_URL = (window.APP_CONFIG || {}).API_URL || '';
+const TOKEN_KEY = 'lv_token', EMAIL_KEY = 'lv_email';
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
+};
+async function api(action, payload) {
+  if (!API_URL || /XXXX/.test(API_URL)) throw new Error('Chưa cấu hình địa chỉ cổng dữ liệu (config.js).');
+  let r;
+  try {
+    r = await fetch(API_URL, { method: 'POST', redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(Object.assign({ action, token: store.get(TOKEN_KEY) }, payload)) });
+  } catch (e) {
+    throw new Error('Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.');
+  }
+  let j;
+  try { j = await r.json(); } catch (e) { throw new Error('Máy chủ trả về dữ liệu lạ (mã ' + r.status + ').'); }
+  if (!j.ok) {
+    if (j.auth) { store.set(TOKEN_KEY, null); showLogin(j.error); }
+    const err = new Error(j.error || 'Lỗi không xác định');
+    err.auth = !!j.auth;
+    throw err;
+  }
+  return j.data;
+}
+function call(fn, ...args) { return api(fn, { args }); }
+
+function showLogin(msg) {
+  $('#login').hidden = false;
+  $('#lgErr').textContent = msg || '';
+  $('#lgEmail').value = store.get(EMAIL_KEY) || $('#lgEmail').value;
+  setTimeout(() => ($('#lgEmail').value ? $('#lgPin') : $('#lgEmail')).focus(), 50);
+}
+$('#loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const email = $('#lgEmail').value.trim(), pin = $('#lgPin').value.trim();
+  $('#lgBtn').disabled = true; $('#lgErr').textContent = '';
+  try {
+    const d = await api('login', { email, pin });
+    store.set(TOKEN_KEY, d.token); store.set(EMAIL_KEY, d.email);
+    $('#lgPin').value = '';
+    $('#login').hidden = true;
+    firstLoad = true;
+    load(false);
+  } catch (err) {
+    $('#lgErr').textContent = err.message;
+  } finally {
+    $('#lgBtn').disabled = false;
+  }
+});
+async function logout() {
+  if (hasUnsaved() && !confirm('Bạn có thay đổi chưa lưu. Vẫn đăng xuất?')) return;
+  try { await api('logout', {}); } catch (e) {}
+  store.set(TOKEN_KEY, null);
+  location.reload();
+}
+function busy(on) { $('#busy').classList.toggle('on', on); }
+let toastTimer = null;
+function toast(msg, ms = 3500) {
+  const t = $('#toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.display = 'none'; }, ms);
+}
+
+// ---------- Hộ, chương trình, lọc ----------
+const farms = () => DATA.ho.rows;
+const farmOf = p => farms()[String(p.props[C.farm] ?? '').trim()];
+const progsOf = p => { const f = farmOf(p); return f ? C.programs.filter(k => f.props[k] === true) : []; };
+function colorOf(p) {
+  const pr = progsOf(p);
+  return !pr.length ? NONE_COLOR : pr.length > 1 ? MULTI_COLOR : PROG_COLOR[pr[0]] || NONE_COLOR;
+}
+function visible(p) {
+  const pr = progsOf(p);
+  return pr.length ? pr.some(k => filter[k]) : filter.none;
+}
+function tagsHtml(p) {
+  return progsOf(p).map(k => `<span class="tag" style="background:${PROG_COLOR[k] || NONE_COLOR}">${esc(k)}</span>`).join('');
+}
+function farmName(f) {
+  return f ? C.listCols.map(k => f.props[k]).filter(v => v !== '' && v != null).join(' ') : '';
+}
+
+function renderChips() {
+  if (!Object.keys(filter).length) { C.programs.forEach(k => { filter[k] = true; }); filter.none = true; }
+  const counts = { none: 0 };
+  DATA.lo.rows.forEach(p => {
+    const pr = progsOf(p);
+    if (!pr.length) counts.none++;
+    pr.forEach(k => { counts[k] = (counts[k] || 0) + 1; });
+  });
+  const items = C.programs.map(k => [k, k, PROG_COLOR[k] || NONE_COLOR]).concat([['none', 'Chưa tham gia', NONE_COLOR]]);
+  $('#chips').innerHTML = items.map(([k, label, color]) =>
+    `<span class="chip ${filter[k] ? '' : 'off'}" data-f="${esc(k)}"><span class="dot" style="background:${color}"></span>${esc(label)} <span class="muted">${counts[k] || 0}</span></span>`
+  ).join('') + `<span class="chip" title="Lô thuộc nhiều chương trình"><span class="dot" style="background:${MULTI_COLOR}"></span>Nhiều CT</span>`;
+  $('#chips').querySelectorAll('[data-f]').forEach(el => el.addEventListener('click', () => {
+    filter[el.dataset.f] = !filter[el.dataset.f];
+    renderChips(); renderLayers();
+    if (!sel) showList();
+  }));
+}
+
+// ---------- Tải dữ liệu ----------
+async function load(keepView) {
+  busy(true);
+  try {
+    DATA = await call('getData');
+    C = DATA.cfg;
+    byId = {};
+    DATA.lo.rows.forEach(p => { byId[p.id] = p; });
+    $('#btnExport').hidden = !DATA.user.isAdmin;
+    if (GPS.fix) { GPS.inPlot = plotAt(GPS.fix.coords.latitude, GPS.fix.coords.longitude); gpsUpdateBadge(); }
+    renderChips();
+    renderLayers();
+    if (firstLoad) {
+      firstLoad = false;
+      if (FOCUS_ID && byId[FOCUS_ID]) { sel = FOCUS_ID; renderLayers(); showPlot(sel, true); return; }
+      fitAll();
+    } else if (!keepView) fitAll();
+    if (sel && byId[sel]) showPlot(sel, false); else { sel = null; showList(); }
+  } catch (e) {
+    if (!e.auth) $('#panelBody').innerHTML = '<p class="err">' + esc(e.message || e) + '</p>';
+  } finally {
+    busy(false);
+  }
+}
+
+function pointOf(p) {
+  const lat = Number(p.props[C.lat]), lng = Number(p.props[C.lon]);
+  if (!p.props[C.lat] || !p.props[C.lon] || !isFinite(lat) || !isFinite(lng)) return null;
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lat, lng] : null;
+}
+
+function styleFor(p) {
+  if (p.id === sel) return { color: SEL_COLOR, weight: 3, fillColor: SEL_COLOR, fillOpacity: 0.2 };
+  const c = colorOf(p);
+  return { color: c, weight: 2, fillColor: c, fillOpacity: 0.1 };
+}
+
+function renderLayers() {
+  plotGroup.clearLayers();
+  layerById = {};
+  DATA.lo.rows.forEach(p => {
+    if (!visible(p) && p.id !== sel) return;
+    let layer = null;
+    if (p.geometry) {
+      try { layer = L.geoJSON(p.geometry, { style: styleFor(p) }).getLayers()[0]; } catch (e) { layer = null; }
+    } else {
+      const ll = pointOf(p);
+      if (ll) layer = L.circleMarker(ll, { radius: 6, color: '#fff', weight: 2, fillColor: colorOf(p), fillOpacity: 1 });
+    }
+    if (!layer) return;
+    layer.on('click', () => select(p.id));
+    const f = farmOf(p);
+    layer.bindTooltip(esc(p.id) + (f ? '<br>' + esc(farmName(f)) : ''), { sticky: true });
+    plotGroup.addLayer(layer);
+    layerById[p.id] = layer;
+  });
+  renderLabels();
+}
+
+// Tên chủ hộ trên bản đồ khi phóng gần (zoom >= LABEL_ZOOM)
+const LABEL_ZOOM = 16, LABEL_MAX = 250;
+const labelGroup = L.layerGroup().addTo(map);
+function renderLabels() {
+  labelGroup.clearLayers();
+  if (!DATA || map.getZoom() < LABEL_ZOOM) return;
+  const b = map.getBounds().pad(0.1);
+  let n = 0;
+  for (const [id, l] of Object.entries(layerById)) {
+    const ll = l.getBounds ? l.getBounds().getCenter() : l.getLatLng();
+    if (!b.contains(ll)) continue;
+    const p = byId[id], f = p && farmOf(p);
+    const name = f ? [f.props.HoDem, f.props.Ten].filter(Boolean).join(' ') : id;
+    if (!name) continue;
+    const text = map.getZoom() >= 18 ? name + ' · ' + id : name;
+    labelGroup.addLayer(L.marker(ll, { interactive: false, keyboard: false,
+      icon: L.divIcon({ className: 'plabel', html: '<span>' + esc(text) + '</span>', iconSize: [0, 0] }) }));
+    if (++n >= LABEL_MAX) break;
+  }
+}
+map.on('moveend zoomend', renderLabels);
+
+function restyle() {
+  Object.entries(layerById).forEach(([id, l]) => {
+    if (l.setStyle && !(l instanceof L.CircleMarker) && byId[id]) l.setStyle(styleFor(byId[id]));
+  });
+}
+
+// ---------- Điện thoại: khung kéo từ đáy ----------
+const mobileMQ = window.matchMedia('(max-width: 760px)');
+const isMobile = () => mobileMQ.matches;
+function sheetPx() {
+  return isMobile() ? $('#panel').getBoundingClientRect().height : 0;
+}
+/** Vùng bản đồ không bị thanh tìm kiếm / khung thông tin che */
+function fitOpts(maxZoom, pad) {
+  pad = pad || 30;
+  return isMobile()
+    ? { paddingTopLeft: [pad, 64 + pad], paddingBottomRight: [pad, sheetPx() + pad], maxZoom }
+    : { padding: [pad, pad], maxZoom };
+}
+function panToVisible(ll, zoom) {
+  if (zoom != null) map.setView(ll, zoom, { animate: false });
+  if (!isMobile()) { map.panTo(ll); return; }
+  const size = map.getSize(), top = 64, bottom = size.y - sheetPx();
+  const target = L.point(size.x / 2, (top + bottom) / 2);
+  const cur = map.latLngToContainerPoint(ll);
+  map.panBy(cur.subtract(target), { animate: true });
+}
+function setSheet(state) {
+  if (!isMobile()) return;
+  $('#panel').dataset.state = state;
+  if (state === 'peek') $('#panel').scrollTop = 0;
+}
+(function initSheet() {
+  const grab = $('#grab'), order = ['peek', 'half', 'full'];
+  let y0 = null;
+  const step = d => {
+    const i = order.indexOf($('#panel').dataset.state || 'half');
+    setSheet(order[Math.max(0, Math.min(order.length - 1, i + d))]);
+  };
+  grab.addEventListener('click', () => {
+    const st = $('#panel').dataset.state;
+    setSheet(st === 'peek' ? 'half' : st === 'half' ? 'full' : 'peek');
+  });
+  grab.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, { passive: true });
+  grab.addEventListener('touchend', e => {
+    if (y0 == null) return;
+    const dy = e.changedTouches[0].clientY - y0;
+    y0 = null;
+    if (Math.abs(dy) > 25) { e.preventDefault(); step(dy < 0 ? 1 : -1); }
+  });
+  $('#btnMenu').addEventListener('click', () => $('#bar').classList.toggle('open'));
+  map.on('click', () => { $('#bar').classList.remove('open'); });
+})();
+
+function fitAll() {
+  if (plotGroup.getLayers().length) map.fitBounds(plotGroup.getBounds(), fitOpts(17, 20));
+}
+
+function zoomTo(id) {
+  const l = layerById[id];
+  if (!l) return;
+  if (l.getBounds) map.fitBounds(l.getBounds(), fitOpts(18));
+  else panToVisible(l.getLatLng(), Math.max(map.getZoom(), 17));
+}
+
+// ---------- Danh sách ----------
+function matches(p, q) {
+  if (!q) return true;
+  const f = farmOf(p);
+  const vals = Object.values(p.props).concat(f ? Object.values(f.props) : []);
+  return vals.some(v => String(v ?? '').toLowerCase().includes(q));
+}
+
+function showList() {
+  const q = $('#q').value.trim().toLowerCase();
+  const all = DATA.lo.rows;
+  const items = all.filter(p => visible(p) && matches(p, q));
+  const noGeom = all.filter(p => !p.geometry).length;
+  let h = `<div class="stats"><b>${Object.keys(farms()).length}</b> hộ · <b>${all.length}</b> lô · <b>${noGeom}</b> lô chưa có ranh giới<br>
+    <span class="muted">${esc(DATA.user.email || '')} ${DATA.user.role ? '· ' + esc(DATA.user.role) : ''}
+    ${DATA.user.canEdit ? '' : '· chỉ xem'} · <button class="logout" id="btnLogout" type="button">Đăng xuất</button></span></div>`;
+  if (!items.length) h += '<p class="muted">Không có lô nào khớp.</p>';
+  items.slice(0, 300).forEach(p => {
+    const badge = p.props.__geomError ? '<span class="badge err">polygon lỗi</span>'
+      : !p.geometry ? '<span class="badge warn">chưa có ranh giới</span>' : '';
+    h += `<div class="item" data-id="${esc(p.id)}"><b>${esc(p.id)}${badge}</b>
+      ${tagsHtml(p)}<span class="muted">${esc(farmName(farmOf(p)))}</span></div>`;
+  });
+  if (items.length > 300) h += `<p class="muted">Đang hiện 300/${items.length} lô. Gõ thêm để lọc.</p>`;
+  $('#panelBody').innerHTML = h;
+  $('#panelBody').querySelectorAll('.item').forEach(el => el.addEventListener('click', () => select(el.dataset.id)));
+  if ($('#btnLogout')) $('#btnLogout').onclick = logout;
+}
+
+// ---------- Chi tiết lô + hộ ----------
+function hasUnsaved() {
+  return Object.keys(dirtyLo).length > 0 || Object.keys(dirtyHo).length > 0 || !!geomEdit || geomRemoved;
+}
+
+function confirmDiscard() {
+  if (!hasUnsaved()) return true;
+  if (!confirm('Bạn có thay đổi chưa lưu. Bỏ qua các thay đổi này?')) return false;
+  cancelEdit(true);
+  return true;
+}
+
+function select(id) {
+  if (id === sel) { zoomTo(id); return; }
+  if (!confirmDiscard()) return;
+  const prev = sel;
+  sel = id;
+  if (prev && byId[prev] && !visible(byId[prev])) renderLayers(); else if (!layerById[id]) renderLayers(); else restyle();
+  $('#bar').classList.remove('open');
+  if (isMobile() && $('#panel').dataset.state === 'peek') setSheet('half');
+  $('#panel').scrollTop = 0;
+  showPlot(id, true);
+}
+
+let fidSeq = 0;
+const SKIP_COLS = () => new Set(C.programs.concat([C.updated, C.updatedBy, 'Polygon']));
+let showMore = false;
+
+function metaOf(kind, col) {
+  return ((C.fields && C.fields[kind]) || []).find(m => m.col === col) || { col, label: col };
+}
+/** Bố cục: { main: [{kind, m}], more: [{group, items:[{kind, m}]}] } theo FIELDS.layout + cột lạ */
+function layout() {
+  const L0 = (C.fields && C.fields.layout) || { main: [], more: [], hidden: [] };
+  const used = new Set([].concat(L0.main, L0.hidden || [], ...L0.more.map(g => g.items)));
+  const conv = key => {
+    const [kind, col] = key.split(':');
+    if (kind === 'calc') return { kind, m: { calc: col, label: col === 'nLo' ? 'Số lô của hộ' : 'Số cây trồng chứng nhận' } };
+    const headers = kind === 'ho' ? DATA.ho.headers : DATA.lo.headers;
+    return headers.includes(col) ? { kind, m: metaOf(kind, col) } : null;
+  };
+  const main = L0.main.map(conv).filter(Boolean);
+  const more = L0.more.map(g => ({ group: g.group, items: g.items.map(conv).filter(Boolean) })).filter(g => g.items.length);
+  const extra = [];
+  [['lo', DATA.lo.headers], ['ho', DATA.ho.headers]].forEach(([kind, hs]) => hs.forEach(col => {
+    if (col && !used.has(kind + ':' + col) && !SKIP_COLS().has(col)) extra.push({ kind, m: metaOf(kind, col) });
+  }));
+  if (extra.length) more.push({ group: 'Cột khác trong sheet', items: extra });
+  return { main, more };
+}
+
+function suggestValues(kind, m) {
+  if (m.suggest === 'farm') return Object.keys(farms());
+  const rows = kind === 'ho' ? Object.values(farms()) : DATA.lo.rows;
+  const set = new Set();
+  rows.forEach(r => { const v = r.props[m.col]; if (v !== '' && v != null) set.add(String(v)); });
+  return Array.from(set).sort((x, y) => x.localeCompare(y, 'vi'));
+}
+
+function curVal(kind, obj, col) {
+  const d = kind === 'ho' ? dirtyHo : dirtyLo;
+  return Object.prototype.hasOwnProperty.call(d, col) ? d[col] : (obj ? obj.props[col] : '');
+}
+
+function numOf(v) {
+  if (v === '' || v == null) return null;
+  const n = Number(String(v).replace(',', '.'));
+  return isFinite(n) ? n : NaN;
+}
+
+/** Kiểm tra giá trị một ô, trả về câu báo lỗi hoặc ''. */
+function fieldError(m, v) {
+  const empty = v === '' || v == null;
+  if (empty) return m.req ? 'Bắt buộc trong GMR' : '';
+  if (m.type === 'number' || m.type === 'int') {
+    const n = numOf(v);
+    if (isNaN(n)) return 'Phải là số';
+    if (m.type === 'int' && !Number.isInteger(n)) return 'Phải là số nguyên';
+    if (m.min != null && n < m.min) return 'Không nhỏ hơn ' + m.min;
+    if (m.max != null && n > m.max) return 'Không lớn hơn ' + m.max;
+  }
+  if (m.type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(String(v))) return 'Ngày không hợp lệ';
+  if (m.pattern && !new RegExp(m.pattern).test(String(v).trim())) return m.patternMsg || 'Sai định dạng';
+  return '';
+}
+
+function fieldHtml(kind, m, obj, ro, ctx) {
+  if (m.calc) {
+    return `<div class="field"><label>${esc(m.label)}</label><div class="calc">${esc(ctx[m.calc])}</div></div>`;
+  }
+  const fid = 'f' + (++fidSeq);
+  let v = obj ? obj.props[m.col] : '';
+  if (v == null) v = '';
+  const lockRo = ro || m.ro || m.auto;
+  const attrs = `id="${fid}" data-kind="${kind}" data-k="${esc(m.col)}" ${lockRo ? (m.type === 'select' ? 'disabled' : 'readonly') : ''}`;
+  let input;
+  if (typeof v === 'boolean') {
+    return `<div class="field check"><input type="checkbox" ${attrs} ${v ? 'checked' : ''} ${lockRo ? 'disabled' : ''}>
+      <label for="${fid}">${esc(m.label)}</label></div>`;
+  } else if (m.type === 'select') {
+    const opts = m.options.slice();
+    if (v !== '' && !opts.includes(String(v))) opts.push(String(v));
+    input = `<select ${attrs}>` + opts.map(o => `<option value="${esc(o)}" ${String(v) === o ? 'selected' : ''}>${esc(o || '—')}</option>`).join('') + '</select>';
+  } else if (m.type === 'date') {
+    input = `<input type="date" ${attrs} value="${esc(String(v).slice(0, 10))}">`;
+  } else {
+    const mode = m.type === 'number' ? 'inputmode="decimal"' : m.type === 'int' || m.type === 'tel' ? 'inputmode="numeric"' : '';
+    let list = '';
+    if (m.suggest && !lockRo) {
+      list = `list="dl${fid}"`;
+      input = `<datalist id="dl${fid}">` + suggestValues(kind, m).map(o => `<option value="${esc(o)}">`).join('') + '</datalist>';
+    }
+    input = (input || '') + `<input type="text" ${attrs} ${mode} ${list} value="${esc(v)}">`;
+  }
+  const err = lockRo ? '' : fieldError(m, v);
+  return `<div class="field ${err ? 'bad' : ''}" data-field="${esc(kind + ':' + m.col)}">
+    <label for="${fid}">${esc(m.label)}${m.req ? ' <span class="req">*</span>' : ''}</label>${input}
+    ${m.hint ? `<div class="fhint">${esc(m.hint)}</div>` : ''}<div class="ferr">${esc(err)}</div></div>`;
+}
+
+function fieldsHtml(p, f, ro, ctx) {
+  const L1 = layout();
+  const one = ({ kind, m }) => {
+    const obj = kind === 'lo' ? p : kind === 'ho' ? f : null;
+    if (kind === 'ho' && !f) return '';
+    const sysRo = m.col && (kind === 'ho' ? C.readonlyHo : C.readonlyLo).includes(m.col) && m.col !== C.farm;
+    return fieldHtml(kind, m, obj, ro || sysRo, ctx);
+  };
+  let h = `<div class="mainf">` + L1.main.map(one).join('') + `</div>`;
+  h += `<button class="more-btn" id="btnMore" type="button">${showMore ? '▲ Ẩn bớt' : '▼ Hiển thị thêm'}</button>`;
+  h += `<div id="moreBox" ${showMore ? '' : 'hidden'}>`;
+  L1.more.forEach(g => {
+    h += `<div class="grp"><div class="grp-t">${esc(g.group)}</div>` + g.items.map(one).join('') + `</div>`;
+  });
+  return h + `</div>`;
+}
+
+function pipRing(x, y, r) {
+  let ins = false;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) ins = !ins;
+  }
+  return ins;
+}
+
+function cccdInfo(c) {
+  const s = String(c || '').trim();
+  if (!/^\d{12}$/.test(s)) return null;
+  const d = Number(s[3]), year = 1900 + Math.floor(d / 2) * 100 + Number(s.slice(4, 6));
+  const age = new Date().getFullYear() - year;
+  return age < 15 || age > 100 ? null : { gender: d % 2 === 0 ? 'Male' : 'Female', year };
+}
+
+/** Kiểm tra giống sheet Dashboard của GMR + kiểm tra polygon. */
+function runChecks(p, f) {
+  const out = [];
+  const fmt = n => (Math.round(n * 1000) / 1000).toLocaleString('vi-VN');
+  const missing = [];
+  const L1 = layout();
+  [].concat(L1.main, ...L1.more.map(g => g.items)).forEach(({ kind, m }) => {
+    const obj = kind === 'lo' ? p : kind === 'ho' ? f : null;
+    if (!obj || !m.col || m.ro || m.auto) return;
+    const e = fieldError(m, curVal(kind, obj, m.col));
+    if (e) missing.push(m.label + ': ' + e.toLowerCase());
+  });
+  if (f) {
+    const cc = String(curVal('ho', f, 'CCCD') || '').trim();
+    if (/^\d{12}$/.test(cc) && !cccdInfo(cc)) out.push(['warn', 'CCCD có vẻ bị sai: không suy ra được năm sinh hợp lệ (số thứ 4–6 của CCCD)']);
+  }
+  if (missing.length) out.push(['err', 'Cần sửa: ' + missing.join('; ')]);
+  if (f) {
+    const plots = DATA.lo.rows.filter(x => String(x.props[C.farm]).trim() === f.id);
+    const sum = plots.reduce((s, x) => s + (numOf(x.id === p.id ? curVal('lo', p, 'DienTich_ha') : x.props.DienTich_ha) || 0), 0);
+    const tot = numOf(curVal('ho', f, 'TongDienTich_ha'));
+    if (tot != null && !isNaN(tot) && Math.abs(tot - sum) > 0.005) {
+      out.push(['warn', `Diện tích tổng của hộ = ${fmt(tot)} ha, nhưng cộng ${plots.length} lô = ${fmt(sum)} ha`]);
+    }
+    const cert = numOf(curVal('ho', f, 'DienTichChungNhan_ha'));
+    if (cert != null && tot != null && cert > tot + 0.005) out.push(['warn', `Diện tích cà phê (${fmt(cert)} ha) lớn hơn diện tích tổng (${fmt(tot)} ha)`]);
+    const prev = numOf(curVal('ho', f, 'SanLuongNamTruoc_kg')), sold = numOf(curVal('ho', f, 'SanLuongBanNamTruoc_kg'));
+    if (prev != null && sold != null && sold > prev) out.push(['warn', `Sản lượng bán năm trước (${fmt(sold)} kg) lớn hơn sản lượng năm trước (${fmt(prev)} kg)`]);
+    const est = numOf(curVal('ho', f, 'SanLuongUoc_kg'));
+    if (cert && est != null) {
+      const y = est / cert, ly = prev != null ? prev / cert : null;
+      out.push(['info', `Năng suất ước tính ${fmt(y)} kg/ha` + (ly != null ? ` · năm trước ${fmt(ly)} kg/ha` : '') +
+        (prev ? ` · tăng trưởng ${fmt((est - prev) / prev * 100)}%` : '')]);
+    }
+  }
+  const decl = numOf(curVal('lo', p, 'DienTich_ha'));
+  const g = geomEdit && geomEdit.layer ? currentGeom() : (geomRemoved ? null : p.geometry);
+  if (g && decl) {
+    const meas = areaHa(g), dv = (meas - decl) / decl * 100;
+    if (Math.abs(dv) > 20) out.push(['warn', `Diện tích đo từ polygon ${fmt(meas)} ha lệch ${dv > 0 ? '+' : ''}${fmt(dv)}% so với khai báo ${fmt(decl)} ha`]);
+  }
+  const lat = numOf(curVal('lo', p, C.lat)), lon = numOf(curVal('lo', p, C.lon));
+  if (lat != null && lon != null && !isNaN(lat) && !isNaN(lon)) {
+    if (lat < 8 || lat > 24 || lon < 102 || lon > 110) out.push(['err', 'Vĩ độ/kinh độ nằm ngoài lãnh thổ Việt Nam – có thể bị nhập ngược']);
+    else if (g && g.type === 'Polygon' && !pipRing(lon, lat, g.coordinates[0])) out.push(['warn', 'Điểm vĩ độ/kinh độ nằm ngoài ranh giới lô']);
+  } else if (f) {
+    const plots = DATA.lo.rows.filter(x => String(x.props[C.farm]).trim() === f.id);
+    const largest = plots.slice().sort((x, y) => (numOf(y.props.DienTich_ha) || 0) - (numOf(x.props.DienTich_ha) || 0))[0];
+    if (largest && largest.id === p.id) out.push(['err', 'GMR bắt buộc có vĩ độ/kinh độ cho lô lớn nhất của hộ']);
+  }
+  if (!out.some(o => o[0] === 'err' || o[0] === 'warn')) out.unshift(['ok', 'Dữ liệu GMR của lô và hộ này hợp lệ']);
+  return out;
+}
+
+function renderChecks() {
+  const p = byId[sel];
+  if (!p || !$('#checks')) return;
+  $('#checks').innerHTML = runChecks(p, farmOf(p)).map(([lv, t]) => `<div class="ck ${lv}">${esc(t)}</div>`).join('');
+}
+
+function showPlot(id, zoom) {
+  const p = byId[id];
+  if (!p) { sel = null; showList(); return; }
+  if (zoom) zoomTo(id);
+  const canEdit = DATA.user.canEdit;
+  const f = farmOf(p);
+  const area = p.geometry ? areaHa(p.geometry) : null;
+  fidSeq = 0;
+  const siblings = f ? DATA.lo.rows.filter(x => String(x.props[C.farm]).trim() === f.id) : [];
+  const ctx = { nLo: siblings.length, nCrop: f && f.props.CayTrong ? 1 : 0 };
+
+  let h = `<button class="link" id="back">← Danh sách</button>
+    <h2>${esc(p.id)} ${tagsHtml(p)}</h2>
+    <div class="who">${f ? esc([f.props.HoDem, f.props.Ten].filter(Boolean).join(' ')) : ''}<span class="muted">${f ? ' · ' + esc(f.id) : ''}</span></div>
+    <div class="stats">
+      Diện tích đo từ polygon: <b id="areaVal">${area != null ? fmtHa(area) : '—'}</b>
+      · khai báo: <b>${esc(p.props.DienTich_ha ?? '—')}</b> ha
+    </div>`;
+  if (p.props.__geomError) h += `<p class="err">Ô Polygon của lô này chứa dữ liệu không đọc được. Vẽ lại hoặc nhập lại từ KML.</p>`;
+  if (!p.geometry) h += `<p class="muted">Lô chưa có ranh giới${pointOf(p) ? ' (đang hiện điểm GPS)' : ' và chưa có điểm GPS'}.</p>`;
+  if (canEdit) {
+    h += `<div class="row">
+      <button id="gEdit">${p.geometry ? '✎ Sửa ranh giới' : '✎ Vẽ ranh giới'}</button>
+      ${p.geometry ? '<button id="gDel" class="danger">Xóa ranh giới</button>' : ''}
+      <button id="gHere" title="Ghi vị trí hiện tại của bạn vào Vĩ độ / Kinh độ của lô">📍 Lấy tọa độ tại đây</button>
+    </div><p class="hint" id="gHint" hidden></p>`;
+  }
+  h += `<div id="checks"></div>`;
+
+  if (f) {
+    h += `<div class="muted">Chương trình tham gia (tick được nhiều):</div><div class="progs">`;
+    C.programs.forEach(k => {
+      h += `<label class="prog" style="border-left:5px solid ${PROG_COLOR[k] || NONE_COLOR}">
+        <input type="checkbox" data-kind="ho" data-k="${esc(k)}" ${f.props[k] === true ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> ${esc(k)}</label>`;
+    });
+    h += `</div>`;
+  }
+
+  h += fieldsHtml(p, f, !canEdit, ctx);
+  if (f) {
+    if (siblings.length > 1) {
+      h += `<div class="muted">Các lô khác của hộ: ` + siblings.filter(x => x.id !== p.id)
+        .map(x => `<button class="link sib" data-id="${esc(x.id)}">${esc(x.id)}</button>`).join(', ') + `</div>`;
+    }
+  } else {
+    h += `<p class="err">Không tìm thấy hộ "${esc(p.props[C.farm] || '')}" trong sheet NongHo.</p>`;
+  }
+
+  if (canEdit) {
+    h += `<div class="actions"><button id="save" class="primary" disabled>Lưu thay đổi</button>
+      <button id="cancel" disabled>Hủy</button></div>`;
+  }
+  $('#panelBody').innerHTML = h;
+  renderChecks();
+
+  $('#back').onclick = () => { if (confirmDiscard()) { sel = null; renderLayers(); showList(); } };
+  $('#btnMore').onclick = () => {
+    showMore = !showMore;
+    $('#moreBox').hidden = !showMore;
+    $('#btnMore').textContent = showMore ? '▲ Ẩn bớt' : '▼ Hiển thị thêm';
+  };
+  $('#panelBody').querySelectorAll('.sib').forEach(el => el.addEventListener('click', () => select(el.dataset.id)));
+  $('#panelBody').querySelectorAll('[data-k]').forEach(el => {
+    if (el.readOnly || el.disabled) return;
+    const evt = el.type === 'checkbox' || el.tagName === 'SELECT' || el.type === 'date' ? 'change' : 'input';
+    el.addEventListener(evt, () => {
+      const kind = el.dataset.kind, col = el.dataset.k;
+      const d = kind === 'ho' ? dirtyHo : dirtyLo;
+      d[col] = el.type === 'checkbox' ? el.checked : el.value;
+      const box = el.closest('.field') || el.closest('.prog');
+      box.classList.add('changed');
+      const m = metaOf(kind, col);
+      if (kind === 'ho' && col === 'CCCD') {
+        const info = cccdInfo(el.value);
+        [['GioiTinh', info && info.gender], ['NamSinh', info && info.year]].forEach(([c2, v2]) => {
+          const e2 = document.querySelector(`[data-kind="ho"][data-k="${c2}"]`);
+          if (e2 && v2 != null) e2.value = v2;
+        });
+      }
+      if (m && box.classList.contains('field')) {
+        const e = fieldError(m, d[col]);
+        box.classList.toggle('bad', !!e);
+        const fe = box.querySelector('.ferr');
+        if (fe) fe.textContent = e;
+      }
+      renderChecks();
+      updateButtons();
+    });
+  });
+  if (canEdit) {
+    $('#gEdit').onclick = startGeomEdit;
+    if ($('#gDel')) $('#gDel').onclick = removeGeom;
+    $('#gHere').onclick = useMyPosition;
+    $('#save').onclick = save;
+    $('#cancel').onclick = () => cancelEdit(false);
+  }
+}
+
+function updateButtons() {
+  const s = $('#save'), c = $('#cancel');
+  if (!s) return;
+  s.disabled = !(Object.keys(dirtyLo).length || Object.keys(dirtyHo).length || geomChanged || geomRemoved);
+  c.disabled = !hasUnsaved();
+}
+
+function currentGeom() { return geomEdit && geomEdit.layer ? geomEdit.layer.toGeoJSON().geometry : null; }
+
+function onGeomChange() {
+  geomChanged = true;
+  const g = currentGeom();
+  if (g && $('#areaVal')) $('#areaVal').textContent = fmtHa(areaHa(g)) + ' (chưa lưu)';
+  renderChecks();
+  updateButtons();
+}
+
+function startGeomEdit() {
+  const p = byId[sel], layer = layerById[sel], hint = $('#gHint');
+  if (p.geometry && layer && layer.pm) {
+    layer.pm.enable({ allowSelfIntersection: false, snappable: true });
+    layer.on('pm:edit pm:change', onGeomChange);
+    geomEdit = { layer, isNew: false };
+    hint.textContent = 'Kéo các đỉnh để sửa. Kéo chấm mờ giữa cạnh để thêm đỉnh. Nhấn chuột phải (điện thoại: nhấn giữ) vào đỉnh để xóa đỉnh.';
+  } else {
+    geomEdit = { layer: null, isNew: true };
+    map.pm.enableDraw('Polygon', { allowSelfIntersection: false, snappable: true });
+    map.once('pm:create', e => {
+      geomEdit.layer = e.layer;
+      e.layer.setStyle({ color: SEL_COLOR, weight: 3, fillOpacity: 0.2 });
+      e.layer.pm.enable({ allowSelfIntersection: false, snappable: true });
+      e.layer.on('pm:edit pm:change', onGeomChange);
+      onGeomChange();
+    });
+    hint.textContent = 'Chạm lần lượt vào các góc lô trên ảnh vệ tinh. Chạm lại điểm đầu tiên để khép kín, sau đó có thể kéo đỉnh để chỉnh.';
+  }
+  hint.hidden = false;
+  $('#gEdit').disabled = true;
+  if ($('#gDel')) $('#gDel').disabled = true;
+  updateButtons();
+}
+
+function removeGeom() {
+  if (!confirm('Xóa ranh giới của lô ' + sel + '? (Chỉ áp dụng khi bấm Lưu)')) return;
+  geomRemoved = true;
+  const l = layerById[sel];
+  if (l) plotGroup.removeLayer(l);
+  $('#areaVal').textContent = '— (chưa lưu)';
+  $('#gEdit').disabled = true;
+  $('#gDel').disabled = true;
+  renderChecks();
+  updateButtons();
+}
+
+function stopGeomTools() {
+  map.pm.disableDraw();
+  map.off('pm:create');
+  if (geomEdit && geomEdit.layer) {
+    if (geomEdit.layer.pm) geomEdit.layer.pm.disable();
+    if (geomEdit.isNew) map.removeLayer(geomEdit.layer);
+  }
+  geomEdit = null; geomChanged = false; geomRemoved = false;
+}
+
+function cancelEdit(silent) {
+  stopGeomTools();
+  dirtyLo = {}; dirtyHo = {};
+  renderLayers();
+  if (!silent && sel) showPlot(sel, false);
+}
+
+async function save() {
+  const p = byId[sel], f = farmOf(p);
+  if (geomEdit && geomEdit.isNew && !geomEdit.layer) {
+    toast('Bạn chưa vẽ xong: chạm lại vào điểm đầu tiên để khép kín polygon.');
+    return;
+  }
+  const payload = {};
+  const loChanged = Object.keys(dirtyLo).length || geomRemoved || (geomEdit && geomChanged);
+  if (loChanged) {
+    payload.lo = { id: p.id, version: p.version, props: dirtyLo };
+    if (geomRemoved) payload.lo.geometry = null;
+    else if (geomEdit && geomChanged) payload.lo.geometry = currentGeom();
+  }
+  if (Object.keys(dirtyHo).length && f) payload.ho = { id: f.id, version: f.version, props: dirtyHo };
+
+  busy(true);
+  $('#save').disabled = true;
+  try {
+    const res = await call('saveAll', payload);
+    const msgs = [];
+    if (res.lo) {
+      replacePlot(res.lo.item);
+      if (res.lo.conflict) msgs.push('Lô vừa được ' + (res.lo.item.props[C.updatedBy] || 'người khác') + ' sửa lúc ' + res.lo.item.props[C.updated]);
+    }
+    if (res.ho) {
+      farms()[res.ho.item.id] = res.ho.item;
+      if (res.ho.conflict) msgs.push('Hộ vừa được ' + (res.ho.item.props[C.updatedBy] || 'người khác') + ' sửa lúc ' + res.ho.item.props[C.updated]);
+    }
+    toast(msgs.length ? msgs.join('. ') + '. Đã tải bản mới nhất, vui lòng sửa lại.' : 'Đã lưu ✓', msgs.length ? 9000 : 3000);
+    stopGeomTools();
+    dirtyLo = {}; dirtyHo = {};
+    renderChips();
+    renderLayers();
+    showPlot(sel, false);
+  } catch (e) {
+    toast('Lỗi khi lưu: ' + (e.message || e), 9000);
+    updateButtons();
+  } finally {
+    busy(false);
+  }
+}
+
+function replacePlot(plot) {
+  const i = DATA.lo.rows.findIndex(x => x.id === plot.id);
+  if (i >= 0) DATA.lo.rows[i] = plot; else DATA.lo.rows.push(plot);
+  byId[plot.id] = plot;
+}
+
+// ---------- Hộp thoại ----------
+function openModal(title, html, importMode) {
+  $('#mTitle').textContent = title;
+  $('#mBody').innerHTML = html;
+  $('#mFoot').hidden = !importMode;
+  $('#modal').hidden = false;
+}
+function closeModal() {
+  $('#modal').hidden = true;
+  if (importLayer) { map.removeLayer(importLayer); importLayer = null; }
+  importItems = [];
+}
+
+// ---------- Nhập KML / KMZ ----------
+function parseKml(text) {
+  const doc = new DOMParser().parseFromString(text, 'text/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error('File KML không đúng định dạng.');
+  const byTag = (el, t) => Array.from(el.getElementsByTagNameNS('*', t));
+  const first = (el, t) => byTag(el, t)[0];
+  const txt = el => (el ? el.textContent.trim() : '');
+  const ringOf = el => {
+    const pts = txt(first(el, 'coordinates')).split(/\s+/).filter(Boolean)
+      .map(s => s.split(',').map(Number))
+      .filter(c => c.length >= 2 && isFinite(c[0]) && isFinite(c[1]))
+      .map(c => [c[0], c[1]]);
+    if (pts.length) {
+      const a = pts[0], b = pts[pts.length - 1];
+      if (a[0] !== b[0] || a[1] !== b[1]) pts.push([a[0], a[1]]);
+    }
+    return pts;
+  };
+  const out = [];
+  byTag(doc, 'Placemark').forEach((pm, n) => {
+    const props = {};
+    byTag(pm, 'Data').forEach(d => { props[d.getAttribute('name')] = txt(first(d, 'value')); });
+    byTag(pm, 'SimpleData').forEach(d => { props[d.getAttribute('name')] = txt(d); });
+    const nameEl = Array.from(pm.children).find(c => c.localName === 'name');
+    const name = txt(nameEl) || props.name || props.Name || ('Polygon ' + (n + 1));
+    const polys = byTag(pm, 'Polygon').map(pg => {
+      const rings = [];
+      const outer = first(pg, 'outerBoundaryIs');
+      if (outer) rings.push(ringOf(outer));
+      byTag(pg, 'innerBoundaryIs').forEach(ib => rings.push(ringOf(ib)));
+      return rings.length && rings[0].length >= 4 ? rings.filter(r => r.length >= 4) : [];
+    }).filter(r => r.length);
+    if (!polys.length) return;
+    out.push({ name, props, geometry: polys.length === 1
+      ? { type: 'Polygon', coordinates: polys[0] } : { type: 'MultiPolygon', coordinates: polys } });
+  });
+  return out;
+}
+
+function guessId(f) {
+  const key = Object.keys(f.props).find(k =>
+    /^(ma_?lo|malo|ma_?thua|plot_?id|plot_?code|farm_?unit_?id|unit_?id|id|code)$/i.test(k.replace(/\s/g, '')));
+  const cands = [key && f.props[key], f.name].filter(Boolean).map(s => String(s).trim());
+  for (const c of cands) if (byId[c]) return c;
+  for (const c of cands) {
+    const hit = Object.keys(byId).find(id => id.toLowerCase() === c.toLowerCase());
+    if (hit) return hit;
+  }
+  return cands[0] || '';
+}
+
+/** Mã hộ: lấy từ KML nếu có; lô có sẵn -> hộ hiện tại; NT-RA-A-04-01 -> NT-RA-A-04 */
+function guessFarm(plotId, props) {
+  const key = Object.keys(props).find(k => /^(ma_?ho|farm_?id|farmer_?id)$/i.test(k.replace(/\s/g, '')));
+  if (key && props[key]) return String(props[key]).trim();
+  if (byId[plotId]) return String(byId[plotId].props[C.farm] || '').trim();
+  if (farms()[plotId]) return plotId;
+  const base = plotId.replace(/-\d{1,3}$/, '');
+  if (farms()[base]) return base;
+  return /-\d+-\d{1,3}$/.test(plotId) ? base : plotId;
+}
+
+function statusOf(it, counts) {
+  const id = it.id.trim();
+  if (!it.include) return '<span class="muted">Bỏ qua</span>';
+  if (!id) return '<span class="err">Cần nhập mã lô</span>';
+  if (counts[id] > 1) return '<span class="err">Trùng mã</span>';
+  const p = byId[id];
+  if (p) return p.geometry ? '<span style="color:var(--warn)">Ghi đè ranh giới cũ</span>' : 'Gán vào lô có sẵn';
+  if (!$('#mAllowNew').checked) return '<span class="err">Chưa có lô này</span>';
+  if (!it.farmId.trim()) return '<span class="err">Cần mã hộ</span>';
+  return farms()[it.farmId.trim()] ? 'Tạo lô mới' : '<span style="color:var(--warn)">Tạo lô + hộ mới</span>';
+}
+
+function refreshImportStatus() {
+  const counts = {};
+  importItems.forEach(it => { if (it.include && it.id.trim()) counts[it.id.trim()] = (counts[it.id.trim()] || 0) + 1; });
+  let n = 0;
+  importItems.forEach((it, i) => {
+    const st = statusOf(it, counts);
+    $('#st' + i).innerHTML = st;
+    if (!/class="(err|muted)"/.test(st)) n++;
+  });
+  $('#mOk').textContent = 'Nhập ' + n + ' polygon';
+  $('#mOk').disabled = n === 0;
+}
+
+function openImport(feats, fileName) {
+  importItems = feats.map(f => {
+    const id = guessId(f);
+    return { ...f, id, farmId: guessFarm(id, f.props), include: true, area: areaHa(f.geometry) };
+  });
+  if (importLayer) map.removeLayer(importLayer);
+  importLayer = L.featureGroup(importItems.map(it => L.geoJSON(it.geometry, {
+    style: { color: IMP_COLOR, weight: 2, dashArray: '6 4', fillOpacity: 0.1 }
+  }))).addTo(map);
+  map.fitBounds(importLayer.getBounds(), { padding: [20, 20], maxZoom: 18 });
+
+  let h = `<p class="muted">Kiểm tra mã lô và mã hộ cho từng polygon (đường cam nét đứt). Bấm vào tên để phóng tới polygon.</p>
+    <datalist id="ids">${Object.keys(byId).map(id => `<option value="${esc(id)}">`).join('')}</datalist>
+    <datalist id="fids">${Object.keys(farms()).map(id => `<option value="${esc(id)}">`).join('')}</datalist>
+    <table><thead><tr><th></th><th>Tên trong file</th><th>Diện tích</th><th>Mã lô</th><th>Mã hộ</th><th>Kết quả</th></tr></thead><tbody>`;
+  importItems.forEach((it, i) => {
+    h += `<tr><td><input type="checkbox" data-inc="${i}" checked></td>
+      <td class="name" data-zoom="${i}">${esc(it.name)}</td><td>${fmtHa(it.area)}</td>
+      <td><input type="text" list="ids" data-id="${i}" value="${esc(it.id)}"></td>
+      <td><input type="text" list="fids" data-fid="${i}" value="${esc(it.farmId)}"></td>
+      <td id="st${i}"></td></tr>`;
+  });
+  h += '</tbody></table><div id="mErr"></div>';
+  openModal(fileName + ' – ' + importItems.length + ' polygon', h, true);
+
+  $('#mProgs').innerHTML = C.programs.map(k =>
+    `<label class="muted"><input type="checkbox" data-np="${esc(k)}" ${new RegExp('(^|[^a-z0-9])' + k + '([^a-z0-9]|$)', 'i').test(fileName) ? 'checked' : ''}> ${esc(k)}</label>`).join(' ');
+  $('#mBody').querySelectorAll('[data-inc]').forEach(el => el.addEventListener('change', () => {
+    importItems[el.dataset.inc].include = el.checked; refreshImportStatus();
+  }));
+  $('#mBody').querySelectorAll('[data-id]').forEach(el => el.addEventListener('input', () => {
+    importItems[el.dataset.id].id = el.value; refreshImportStatus();
+  }));
+  $('#mBody').querySelectorAll('[data-fid]').forEach(el => el.addEventListener('input', () => {
+    importItems[el.dataset.fid].farmId = el.value; refreshImportStatus();
+  }));
+  $('#mBody').querySelectorAll('[data-zoom]').forEach(el => el.addEventListener('click', () => {
+    map.fitBounds(L.geoJSON(importItems[el.dataset.zoom].geometry).getBounds(), { padding: [30, 30], maxZoom: 19 });
+  }));
+  refreshImportStatus();
+}
+
+async function doImport() {
+  const allowNew = $('#mAllowNew').checked;
+  const programs = {};
+  document.querySelectorAll('[data-np]').forEach(el => { programs[el.dataset.np] = el.checked; });
+  const items = importItems.filter(it => it.include && it.id.trim())
+    .map(it => ({ id: it.id.trim(), farmId: it.farmId.trim(), geometry: it.geometry, createNew: allowNew }));
+  busy(true);
+  $('#mOk').disabled = true;
+  try {
+    const r = await call('importPlots', items, { programs });
+    const msg = `Đã cập nhật ${r.updated} lô, tạo mới ${r.created} lô` + (r.newFarms ? `, ${r.newFarms} hộ mới` : '') + '.';
+    if (r.errors.length) {
+      $('#mErr').innerHTML = `<p><b>${esc(msg)}</b></p><p class="err">Không nhập được ${r.errors.length} polygon:</p><ul>` +
+        r.errors.map(e => `<li>${esc(e)}</li>`).join('') + '</ul>';
+    } else {
+      closeModal();
+      toast(msg + ' ✓', 6000);
+    }
+    await load(true);
+  } catch (e) {
+    toast('Lỗi khi nhập: ' + (e.message || e), 9000);
+    $('#mOk').disabled = false;
+  } finally {
+    busy(false);
+  }
+}
+
+async function readKmlFile(f) {
+  if (/\.kmz$/i.test(f.name)) {
+    const zip = await JSZip.loadAsync(f);
+    const files = Object.values(zip.files).filter(z => !z.dir && /\.kml$/i.test(z.name));
+    const kml = files.find(z => /(^|\/)doc\.kml$/i.test(z.name)) || files[0];
+    if (!kml) throw new Error('Không tìm thấy file .kml bên trong KMZ.');
+    return kml.async('string');
+  }
+  return f.text();
+}
+
+// ---------- Xuất file ----------
+async function doExport() {
+  if (!confirmDiscard()) return;
+  if (!confirm('Xuất file GMR RA (.xlsx) và KML từ dữ liệu hiện tại?')) return;
+  busy(true);
+  $('#btnExport').disabled = true;
+  try {
+    const r = await call('exportProgram', 'RA');
+    openModal('Đã xuất file RA', `<p>${r.farms} hộ · ${r.plots} lô</p>
+      <p>📄 <a href="${esc(r.xlsxUrl)}" target="_blank" rel="noopener">${esc(r.name)}.xlsx</a></p>
+      <p>🗺 <a href="${esc(r.kmlUrl)}" target="_blank" rel="noopener">File KML polygon</a></p>
+      <p class="muted">File nằm trong thư mục xuất đã cấu hình ở sheet CauHinh.</p>`, false);
+  } catch (e) {
+    toast('Không xuất được: ' + (e.message || e), 10000);
+  } finally {
+    busy(false);
+    $('#btnExport').disabled = false;
+  }
+}
+
+// ---------- Vị trí hiện tại (GPS) ----------
+const GPS = { watch: null, follow: false, fix: null, marker: null, acc: null, ctrl: null, first: true, inPlot: null };
+
+function gpsSupported() {
+  if (!navigator.geolocation) { toast('Trình duyệt này không hỗ trợ định vị.'); return false; }
+  return true;
+}
+function gpsError(e) {
+  const msg = e.code === 1
+    ? 'Chưa được phép dùng vị trí. Hãy bật Vị trí (GPS) trên điện thoại và cho phép trang này truy cập vị trí (biểu tượng ổ khóa cạnh thanh địa chỉ → Quyền → Vị trí).'
+    : e.code === 3 ? 'Không lấy được vị trí (hết thời gian chờ). Hãy ra chỗ thoáng và thử lại.'
+    : 'Không lấy được vị trí: ' + (e.message || 'lỗi không xác định');
+  toast(msg, 10000);
+  if (e.code === 1) gpsStop();
+}
+function plotAt(lat, lng) {
+  for (const p of DATA.lo.rows) {
+    const g = p.geometry;
+    if (!g) continue;
+    if (!p._bb) {
+      const ring = g.type === 'Polygon' ? g.coordinates[0] : g.coordinates.flatMap(pp => pp[0]);
+      p._bb = ring.reduce((b, c) => [Math.min(b[0], c[0]), Math.min(b[1], c[1]), Math.max(b[2], c[0]), Math.max(b[3], c[1])], [999, 999, -999, -999]);
+    }
+    const b = p._bb;
+    if (lng < b[0] || lng > b[2] || lat < b[1] || lat > b[3]) continue;
+    const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+    if (polys.some(rings => pipRing(lng, lat, rings[0]) && !rings.slice(1).some(h => pipRing(lng, lat, h)))) return p;
+  }
+  return null;
+}
+function gpsUpdateBadge() {
+  const el = $('#gps');
+  if (!GPS.fix) { el.hidden = true; return; }
+  const acc = Math.round(GPS.fix.coords.accuracy);
+  const p = GPS.inPlot;
+  const f = p ? farmOf(p) : null;
+  el.innerHTML = `📍 ±${acc} m · ` + (p ? `trong lô <b>${esc(p.id)}</b>${f ? ' · ' + esc(farmName(f)) : ''}` : 'ngoài các lô đã có ranh giới');
+  el.hidden = false;
+}
+function gpsOnFix(pos) {
+  GPS.fix = pos;
+  const ll = L.latLng(pos.coords.latitude, pos.coords.longitude);
+  if (!GPS.marker) {
+    GPS.acc = L.circle(ll, { radius: pos.coords.accuracy, color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: 0.12, interactive: false }).addTo(map);
+    GPS.marker = L.circleMarker(ll, { radius: 8, color: '#fff', weight: 3, fillColor: '#1a73e8', fillOpacity: 1 }).addTo(map);
+    GPS.marker.bindTooltip('Vị trí của bạn');
+  } else {
+    GPS.marker.setLatLng(ll);
+    GPS.acc.setLatLng(ll).setRadius(pos.coords.accuracy);
+  }
+  GPS.inPlot = DATA ? plotAt(ll.lat, ll.lng) : null;
+  gpsUpdateBadge();
+  if (GPS.first) { GPS.first = false; panToVisible(ll, Math.max(map.getZoom(), 17)); }
+  else if (GPS.follow) panToVisible(ll);
+}
+function gpsStart() {
+  if (!gpsSupported()) return;
+  GPS.first = true; GPS.follow = true;
+  GPS.watch = navigator.geolocation.watchPosition(gpsOnFix, gpsError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 30000 });
+  gpsStyle();
+  toast('Đang lấy vị trí…', 2500);
+}
+function gpsStop() {
+  if (GPS.watch != null) navigator.geolocation.clearWatch(GPS.watch);
+  GPS.watch = null; GPS.follow = false; GPS.fix = null; GPS.inPlot = null;
+  if (GPS.marker) { map.removeLayer(GPS.marker); map.removeLayer(GPS.acc); GPS.marker = GPS.acc = null; }
+  gpsUpdateBadge();
+  gpsStyle();
+}
+function gpsStyle() {
+  const el = GPS.ctrl && GPS.ctrl.getContainer();
+  if (!el) return;
+  el.classList.toggle('on', GPS.watch != null);
+  el.classList.toggle('follow', GPS.watch != null && GPS.follow);
+}
+const LocateCtl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control locate');
+    const a = L.DomUtil.create('a', '', div);
+    a.href = '#'; a.title = 'Vị trí của tôi'; a.setAttribute('role', 'button'); a.textContent = '◎';
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.on(a, 'click', e => {
+      L.DomEvent.preventDefault(e);
+      if (GPS.watch == null) gpsStart();
+      else if (!GPS.follow) { GPS.follow = true; gpsStyle(); if (GPS.fix) panToVisible(L.latLng(GPS.fix.coords.latitude, GPS.fix.coords.longitude), Math.max(map.getZoom(), 17)); }
+      else gpsStop();
+    });
+    return div;
+  }
+});
+GPS.ctrl = new LocateCtl().addTo(map);
+map.on('dragstart', () => { if (GPS.follow) { GPS.follow = false; gpsStyle(); } });
+$('#gps').addEventListener('click', () => { if (GPS.inPlot) select(GPS.inPlot.id); });
+
+/** Ghi vị trí hiện tại vào Vĩ độ / Kinh độ của lô đang chọn (chưa lưu cho tới khi bấm Lưu) */
+function useMyPosition() {
+  if (!gpsSupported()) return;
+  const apply = pos => {
+    const acc = Math.round(pos.coords.accuracy);
+    if (acc > 30 && !confirm(`Độ chính xác hiện tại là ±${acc} m (khá thấp). Vẫn ghi tọa độ này?`)) return;
+    const lat = pos.coords.latitude.toFixed(6), lng = pos.coords.longitude.toFixed(6);
+    [[C.lat, lat], [C.lon, lng]].forEach(([col, v]) => {
+      dirtyLo[col] = v;
+      const el = document.querySelector(`[data-kind="lo"][data-k="${col}"]`);
+      if (el) { el.value = v; const box = el.closest('.field'); if (box) { box.classList.add('changed'); box.classList.remove('bad'); } }
+    });
+    const p = byId[sel];
+    if (p && p.geometry) toast('Lưu ý: lô đã có ranh giới, khi sửa ranh giới hệ thống sẽ tự tính lại vĩ độ/kinh độ.', 7000);
+    else toast(`Đã điền tọa độ ±${acc} m. Bấm "Lưu thay đổi" để ghi.`, 5000);
+    renderChecks();
+    updateButtons();
+  };
+  if (GPS.fix && Date.now() - GPS.fix.timestamp < 15000) { apply(GPS.fix); return; }
+  toast('Đang lấy vị trí…', 3000);
+  navigator.geolocation.getCurrentPosition(apply, gpsError, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+}
+
+// ---------- Sự kiện ----------
+$('#q').addEventListener('focus', () => { if (isMobile()) setSheet('full'); });
+$('#q').addEventListener('input', () => {
+  if (!DATA || hasUnsaved()) return;
+  if (sel) { sel = null; renderLayers(); }
+  showList();
+});
+$('#btnReload').onclick = () => { if (confirmDiscard()) load(true); };
+$('#btnExport').onclick = doExport;
+$('#btnImport').onclick = () => {
+  if (!DATA) return;
+  if (!DATA.user.canEdit) { toast('Tài khoản của bạn chỉ có quyền xem.'); return; }
+  if (!confirmDiscard()) return;
+  $('#file').value = '';
+  $('#file').click();
+};
+$('#file').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const feats = parseKml(await readKmlFile(f));
+    if (!feats.length) throw new Error('Không tìm thấy polygon nào trong file.');
+    openImport(feats, f.name);
+  } catch (err) {
+    toast('Không đọc được file: ' + (err.message || err), 9000);
+  }
+});
+$('#mAllowNew').addEventListener('change', refreshImportStatus);
+$('#mOk').onclick = doImport;
+$('#mCancel').onclick = closeModal;
+$('#mClose').onclick = closeModal;
+window.addEventListener('beforeunload', e => { if (hasUnsaved()) { e.preventDefault(); e.returnValue = ''; } });
+
+// Tự làm mới mỗi 2 phút để thấy thay đổi của người khác (khi không đang sửa)
+setInterval(() => {
+  if (DATA && !hasUnsaved() && $('#modal').hidden && document.visibilityState === 'visible') load(true);
+}, 120000);
+
+if (store.get(TOKEN_KEY)) load(false); else showLogin();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
