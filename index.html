@@ -224,7 +224,7 @@
 <body>
 <div id="app">
   <div id="bar">
-    <input id="q" type="search" placeholder="Tìm mã lô, mã hộ, tên, xã…">
+    <input id="q" type="search" placeholder="Tìm tên chủ hộ hoặc mã vườn…">
     <button id="btnMenu" title="Bộ lọc và công cụ">☰</button>
     <div id="chips"></div>
     <div id="busy"></div>
@@ -582,15 +582,19 @@ function zoomTo(id) {
 }
 
 // ---------- Danh sách ----------
+/** Bỏ dấu tiếng Việt, chữ thường: "Trương Thị Hồng" -> "truong thi hong" */
+const fold = s => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase().replace(/\s+/g, ' ').trim();
+/** Chỉ tìm theo tên chủ hộ và mã vườn (mã lô) */
 function matches(p, q) {
   if (!q) return true;
   const f = farmOf(p);
-  const vals = Object.values(p.props).concat(f ? Object.values(f.props) : []);
-  return vals.some(v => String(v ?? '').toLowerCase().includes(q));
+  const name = f ? fold([f.props.HoDem, f.props.Ten].filter(Boolean).join(' ')) : '';
+  return fold(p.id).includes(q) || name.includes(q);
 }
 
 function showList() {
-  const q = $('#q').value.trim().toLowerCase();
+  const q = fold($('#q').value);
   const all = DATA.lo.rows;
   const items = all.filter(p => visible(p) && matches(p, q));
   const noGeom = all.filter(p => !p.geometry).length;
