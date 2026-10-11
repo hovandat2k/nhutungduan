@@ -160,6 +160,8 @@
     border-radius: 8px; cursor: pointer; font-weight: 600; }
   .prog input { width: 18px; height: 18px; margin: 0; }
   .prog.changed { border-color: var(--accent); }
+  .prog.ro { cursor: default; opacity: .55; font-weight: 500; }
+  .prog.ro.on { opacity: 1; font-weight: 700; }
   details summary { cursor: pointer; color: var(--accent); margin: 4px 0 10px; }
   .actions { position: sticky; bottom: -24px; background: var(--bg); padding: 10px 0; display: flex; gap: 8px;
     border-top: 1px solid var(--line); z-index: 2; }
@@ -242,7 +244,7 @@
     <header><b id="mTitle"></b><button class="link" id="mClose">Đóng</button></header>
     <div class="body" id="mBody"></div>
     <footer id="mFoot">
-      <span class="muted">Tick cho hộ mới:</span><span id="mProgs"></span>
+      <span class="muted">Hộ mới tự tick:</span><span id="mProgs"></span>
       <label class="muted"><input type="checkbox" id="mAllowNew" checked> Tạo lô mới nếu mã chưa có</label>
       <button id="mCancel">Hủy</button>
       <button id="mOk" class="primary">Nhập</button>
@@ -280,7 +282,7 @@ let importLayer = null, importItems = [];
 let firstLoad = true;
 let filter = {};            // { RA: true, '4C': true, CP: true, none: true }
 
-const PROG_COLOR = { RA: '#4ade80', '4C': '#38bdf8', CP: '#c084fc' };
+const PROG_COLOR = { RA: '#4ade80', '4C1': '#38bdf8', '4C2': '#c084fc', '4C3': '#fb923c', '4C': '#38bdf8', CP: '#f472b6' };
 const MULTI_COLOR = '#ffffff', NONE_COLOR = '#94a3b8', SEL_COLOR = '#ffd400', IMP_COLOR = '#ff7a00';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g,
@@ -401,7 +403,10 @@ const farmOf = p => farms()[String(p.props[C.farm] ?? '').trim()];
 const progsOf = p => { const f = farmOf(p); return f ? C.programs.filter(k => f.props[k] === true) : []; };
 function colorOf(p) {
   const pr = progsOf(p);
-  return !pr.length ? NONE_COLOR : pr.length > 1 ? MULTI_COLOR : PROG_COLOR[pr[0]] || NONE_COLOR;
+  // Mọi hộ đều RA nên tô màu theo nhóm 4C nếu có; chỉ RA -> xanh lá
+  const extra = pr.filter(k => k !== 'RA');
+  const show = extra.length ? extra : pr;
+  return !show.length ? NONE_COLOR : show.length > 1 ? MULTI_COLOR : PROG_COLOR[show[0]] || NONE_COLOR;
 }
 function visible(p) {
   const pr = progsOf(p);
@@ -857,10 +862,10 @@ function showPlot(id, zoom) {
   h += `<div id="checks"></div>`;
 
   if (f) {
-    h += `<div class="muted">Chương trình tham gia (tick được nhiều):</div><div class="progs">`;
+    h += `<div class="muted">Chương trình tham gia (theo danh sách, không sửa trên bản đồ):</div><div class="progs">`;
     C.programs.forEach(k => {
-      h += `<label class="prog" style="border-left:5px solid ${PROG_COLOR[k] || NONE_COLOR}">
-        <input type="checkbox" data-kind="ho" data-k="${esc(k)}" ${f.props[k] === true ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> ${esc(k)}</label>`;
+      h += `<label class="prog ro ${f.props[k] === true ? 'on' : ''}" style="border-left:5px solid ${PROG_COLOR[k] || NONE_COLOR}">
+        <input type="checkbox" ${f.props[k] === true ? 'checked' : ''} disabled> ${esc(k)}</label>`;
     });
     h += `</div>`;
   }
@@ -1171,8 +1176,7 @@ function openImport(feats, fileName) {
   h += '</tbody></table><div id="mErr"></div>';
   openModal(fileName + ' – ' + importItems.length + ' polygon', h, true);
 
-  $('#mProgs').innerHTML = C.programs.map(k =>
-    `<label class="muted"><input type="checkbox" data-np="${esc(k)}" ${new RegExp('(^|[^a-z0-9])' + k + '([^a-z0-9]|$)', 'i').test(fileName) ? 'checked' : ''}> ${esc(k)}</label>`).join(' ');
+  $('#mProgs').innerHTML = '<b>RA</b>';
   $('#mBody').querySelectorAll('[data-inc]').forEach(el => el.addEventListener('change', () => {
     importItems[el.dataset.inc].include = el.checked; refreshImportStatus();
   }));
@@ -1665,7 +1669,7 @@ function showNewForm() {
       <div class="field"><label for="nwTen">Tên <span class="req">*</span></label><input type="text" id="nwTen"></div>
       <div class="field"><label for="nwXa">Xã/thôn</label><input type="text" id="nwXa" list="nwXas">${dl('nwXas', suggestValues('ho', { col: 'ThonXa' }))}</div>
       <div class="field"><label for="nwTinh">Tỉnh</label><input type="text" id="nwTinh" list="nwTinhs">${dl('nwTinhs', Array.from(new Set(['Lâm Đồng', 'Sơn La'].concat(suggestValues('ho', { col: 'Tinh' })))))}</div>
-      <div class="progs">${C.programs.map(k => `<label class="prog" style="border-left:5px solid ${PROG_COLOR[k] || NONE_COLOR}"><input type="checkbox" data-nprog="${esc(k)}"> ${esc(k)}</label>`).join('')}</div>
+      <div class="muted" style="margin-bottom:8px">Hộ mới tự tick <b>RA</b>; nhóm 4C cập nhật theo danh sách.</div>
     </div>
     <div class="field"><label for="nwId">Mã lô <span class="req">*</span></label><input type="text" id="nwId" autocomplete="off"></div>
     <div class="field"><label for="nwArea">Diện tích khai báo (ha)</label><input type="text" id="nwArea" inputmode="decimal"></div>
