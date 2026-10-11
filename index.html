@@ -195,6 +195,27 @@
     border-radius: 50%; animation: spin 1s linear infinite; visibility: hidden; flex: none; }
   #busy.on { visibility: visible; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* Ảnh mảnh vườn */
+  .photos { margin: 2px 0 14px; }
+  .ph-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+  .ph-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; }
+  .ph-grid:empty { display: none; }
+  .ph { padding: 0; aspect-ratio: 1; overflow: hidden; border-radius: 8px; min-height: 0 !important; font-size: 22px; }
+  .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ph-add { width: 100%; margin-top: 8px; font-weight: 600; color: var(--accent); background: var(--bg); }
+  .ph-src { margin: 8px 0 0; }
+  .ph-src button { flex: 1; }
+  .ph-view { text-align: center; padding-top: 12px; }
+  .ph-view img { max-width: 100%; max-height: 58vh; border-radius: 8px; background: var(--soft); }
+  /* Nút + và tạo lô mới */
+  .addctl a { font-size: 26px; font-weight: 600; line-height: 28px !important; }
+  .addmenu { display: grid; gap: 8px; padding: 12px 0 4px; }
+  .addmenu button { display: grid; gap: 2px; text-align: left; white-space: normal; padding: 12px 14px; font-size: 15px; }
+  .newpin span { display: block; width: 22px; height: 22px; border-radius: 50%; background: #ff7a00; border: 3px solid #fff;
+    box-shadow: 0 0 0 2px #ff7a00, 0 2px 6px rgba(0,0,0,.5); }
+  .quick { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
+  .quick button { font-size: 13px; padding: 5px 10px; min-height: 0 !important; white-space: normal; text-align: left; }
+  .newfarm { border: 1px dashed var(--warn); border-radius: 8px; padding: 8px 10px 2px; margin-bottom: 10px; }
 </style>
 </head>
 <body>
@@ -415,6 +436,8 @@ async function load(keepView) {
   try {
     DATA = await call('getData');
     C = DATA.cfg;
+    DATA.photos = DATA.photos || {};
+    Object.keys(PHOTOS).forEach(id => { if ((DATA.photos[id] || 0) !== PHOTOS[id].length) delete PHOTOS[id]; });
     byId = {};
     DATA.lo.rows.forEach(p => { byId[p.id] = p; });
     $('#btnExport').hidden = !DATA.user.isAdmin;
@@ -459,7 +482,7 @@ function renderLayers() {
       if (ll) layer = L.circleMarker(ll, { radius: 6, color: '#fff', weight: 2, fillColor: colorOf(p), fillOpacity: 1 });
     }
     if (!layer) return;
-    layer.on('click', () => select(p.id));
+    layer.on('click', () => { if (!NEW && !map.pm.globalDrawModeEnabled()) select(p.id); });
     const f = farmOf(p);
     layer.bindTooltip(esc(p.id) + (f ? '<br>' + esc(farmName(f)) : ''), { sticky: true });
     plotGroup.addLayer(layer);
@@ -586,7 +609,7 @@ function showList() {
 
 // ---------- Chi tiết lô + hộ ----------
 function hasUnsaved() {
-  return Object.keys(dirtyLo).length > 0 || Object.keys(dirtyHo).length > 0 || !!geomEdit || geomRemoved;
+  return Object.keys(dirtyLo).length > 0 || Object.keys(dirtyHo).length > 0 || !!geomEdit || geomRemoved || !!NEW;
 }
 
 function confirmDiscard() {
@@ -822,7 +845,6 @@ function showPlot(id, zoom) {
     h += `<div class="row">
       <button id="gEdit">${p.geometry ? '✎ Sửa ranh giới' : '✎ Vẽ ranh giới'}</button>
       ${p.geometry ? '<button id="gDel" class="danger">Xóa ranh giới</button>' : ''}
-      <button id="gHere" title="Ghi vị trí hiện tại của bạn vào Vĩ độ / Kinh độ của lô">📍 Lấy tọa độ tại đây</button>
     </div><p class="hint" id="gHint" hidden></p>`;
   }
   h += `<div id="checks"></div>`;
@@ -835,6 +857,7 @@ function showPlot(id, zoom) {
     });
     h += `</div>`;
   }
+  h += photosHtml(p);
 
   h += fieldsHtml(p, f, !canEdit, ctx);
   if (f) {
@@ -852,6 +875,7 @@ function showPlot(id, zoom) {
   }
   $('#panelBody').innerHTML = h;
   renderChecks();
+  initPhotos(p.id);
 
   $('#back').onclick = () => { if (confirmDiscard()) { sel = null; renderLayers(); showList(); } };
   $('#btnMore').onclick = () => {
@@ -890,7 +914,6 @@ function showPlot(id, zoom) {
   if (canEdit) {
     $('#gEdit').onclick = startGeomEdit;
     if ($('#gDel')) $('#gDel').onclick = removeGeom;
-    $('#gHere').onclick = useMyPosition;
     $('#save').onclick = save;
     $('#cancel').onclick = () => cancelEdit(false);
   }
@@ -951,6 +974,7 @@ function removeGeom() {
 }
 
 function stopGeomTools() {
+  stopNew();
   map.pm.disableDraw();
   map.off('pm:create');
   if (geomEdit && geomEdit.layer) {
@@ -1310,27 +1334,399 @@ GPS.ctrl = new LocateCtl().addTo(map);
 map.on('dragstart', () => { if (GPS.follow) { GPS.follow = false; gpsStyle(); } });
 $('#gps').addEventListener('click', () => { if (GPS.inPlot) select(GPS.inPlot.id); });
 
-/** Ghi vị trí hiện tại vào Vĩ độ / Kinh độ của lô đang chọn (chưa lưu cho tới khi bấm Lưu) */
-function useMyPosition() {
-  if (!gpsSupported()) return;
-  const apply = pos => {
-    const acc = Math.round(pos.coords.accuracy);
-    if (acc > 30 && !confirm(`Độ chính xác hiện tại là ±${acc} m (khá thấp). Vẫn ghi tọa độ này?`)) return;
-    const lat = pos.coords.latitude.toFixed(6), lng = pos.coords.longitude.toFixed(6);
-    [[C.lat, lat], [C.lon, lng]].forEach(([col, v]) => {
-      dirtyLo[col] = v;
-      const el = document.querySelector(`[data-kind="lo"][data-k="${col}"]`);
-      if (el) { el.value = v; const box = el.closest('.field'); if (box) { box.classList.add('changed'); box.classList.remove('bad'); } }
-    });
-    const p = byId[sel];
-    if (p && p.geometry) toast('Lưu ý: lô đã có ranh giới, khi sửa ranh giới hệ thống sẽ tự tính lại vĩ độ/kinh độ.', 7000);
-    else toast(`Đã điền tọa độ ±${acc} m. Bấm "Lưu thay đổi" để ghi.`, 5000);
-    renderChecks();
-    updateButtons();
+// ---------- Ảnh mảnh vườn ----------
+const PHOTOS = {};                 // MaLo -> danh sách ảnh (có ảnh thu nhỏ)
+const FULL = new Map();            // FileId -> ảnh gốc (data URL), giữ tối đa 12 ảnh
+const photoCount = id => PHOTOS[id] ? PHOTOS[id].length : ((DATA.photos || {})[id] || 0);
+const UPLOADING = {};              // MaLo -> câu báo tiến độ
+
+function photosHtml(p) {
+  const n = photoCount(p.id);
+  return `<div class="photos"><div class="ph-head"><b>Ảnh mảnh vườn</b>
+      <span class="muted" id="phCount">${n ? n + ' ảnh' : 'chưa có ảnh'}</span></div>
+    <div class="ph-grid" id="phGrid">${n ? '<span class="muted">Đang tải ảnh…</span>' : ''}</div>
+    <div class="muted" id="phProg">${esc(UPLOADING[p.id] || '')}</div>
+    ${DATA.user.canEdit ? `<button type="button" class="ph-add" id="phAdd">📷 Thêm ảnh</button>
+      <div class="row ph-src" id="phSrc" hidden>
+        <button type="button" id="phCam">📸 Chụp ảnh mới</button>
+        <button type="button" id="phLib">🖼 Chọn từ thư viện</button>
+      </div>
+      <input type="file" id="phInCam" accept="image/*" capture="environment" hidden>
+      <input type="file" id="phInLib" accept="image/*" multiple hidden>` : ''}
+  </div>`;
+}
+
+function initPhotos(id) {
+  if ($('#phAdd')) {
+    $('#phAdd').onclick = () => { $('#phSrc').hidden = !$('#phSrc').hidden; };
+    $('#phCam').onclick = () => { $('#phInCam').value = ''; $('#phInCam').click(); };
+    $('#phLib').onclick = () => { $('#phInLib').value = ''; $('#phInLib').click(); };
+    ['#phInCam', '#phInLib'].forEach(s => $(s).addEventListener('change', e => {
+      $('#phSrc').hidden = true;
+      uploadPhotos(id, e.target.files);
+    }));
+  }
+  loadPhotos(id);
+}
+
+function renderPhotoGrid(id) {
+  const g = $('#phGrid');
+  if (!g || sel !== id) return;
+  const list = PHOTOS[id] || [];
+  $('#phCount').textContent = list.length ? list.length + ' ảnh' : 'chưa có ảnh';
+  g.innerHTML = list.map((ph, i) =>
+    `<button type="button" class="ph" data-i="${i}" title="${esc(ph.time)} · ${esc(ph.by)}">${ph.thumb ? `<img src="${esc(ph.thumb)}" alt="Ảnh ${i + 1}" loading="lazy">` : '🖼'}</button>`).join('');
+  g.querySelectorAll('.ph').forEach(el => { el.onclick = () => openPhoto(id, Number(el.dataset.i)); });
+}
+
+async function loadPhotos(id, force) {
+  if (!force && PHOTOS[id]) { renderPhotoGrid(id); return; }
+  if (!force && !photoCount(id)) { PHOTOS[id] = []; renderPhotoGrid(id); return; }
+  try {
+    PHOTOS[id] = await call('listPhotos', id);
+    DATA.photos[id] = PHOTOS[id].length;
+    renderPhotoGrid(id);
+  } catch (e) {
+    if ($('#phGrid') && sel === id) $('#phGrid').innerHTML = '<span class="err">Không tải được ảnh: ' + esc(e.message || e) + '</span>';
+  }
+}
+
+function loadImg(file) {
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(file), img = new Image();
+    img.onload = () => res({ img, u });
+    img.onerror = () => { URL.revokeObjectURL(u); rej(new Error('không đọc được file ' + file.name)); };
+    img.src = u;
+  });
+}
+function toJpeg(img, max, q) {
+  const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(img.naturalWidth * k));
+  c.height = Math.max(1, Math.round(img.naturalHeight * k));
+  const x = c.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+  x.drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', q);
+}
+function setPhotoProg(id, msg) {
+  if (msg) UPLOADING[id] = msg; else delete UPLOADING[id];
+  if (sel === id && $('#phProg')) $('#phProg').textContent = msg || '';
+}
+
+/** Thu nhỏ ảnh (cạnh dài 1600 px) rồi gửi lên; ảnh lưu riêng theo mã lô. */
+async function uploadPhotos(id, files) {
+  files = Array.from(files || []);
+  if (!files.length) return;
+  if (!PHOTOS[id]) await loadPhotos(id, true);
+  const fix = GPS.fix && Date.now() - GPS.fix.timestamp < 60000 ? GPS.fix.coords : null;
+  let ok = 0;
+  busy(true);
+  for (let i = 0; i < files.length; i++) {
+    setPhotoProg(id, `Đang lưu ảnh ${i + 1}/${files.length}…`);
+    try {
+      const { img, u } = await loadImg(files[i]);
+      const data = toJpeg(img, 1600, 0.82), thumb = toJpeg(img, 240, 0.7);
+      URL.revokeObjectURL(u);
+      const ph = await call('addPhoto', { plot: id, data, thumb,
+        lat: fix ? fix.latitude.toFixed(6) : '', lon: fix ? fix.longitude.toFixed(6) : '' });
+      (PHOTOS[id] = PHOTOS[id] || []).unshift(ph);
+      DATA.photos[id] = PHOTOS[id].length;
+      FULL.set(ph.fileId, data);
+      ok++;
+      renderPhotoGrid(id);
+    } catch (e) {
+      toast('Không lưu được ảnh: ' + (e.message || e), 9000);
+    }
+  }
+  setPhotoProg(id, '');
+  busy(false);
+  if (ok) toast(`Đã lưu ${ok} ảnh cho lô ${id} ✓`);
+}
+
+async function openPhoto(id, i) {
+  const list = PHOTOS[id] || [], ph = list[i];
+  if (!ph) return;
+  const canDel = DATA.user.canEdit && (DATA.user.isAdmin || String(ph.by).toLowerCase() === String(DATA.user.email).toLowerCase());
+  openModal(`Ảnh lô ${id} · ${i + 1}/${list.length}`, `<div class="ph-view"><img id="phBig" src="${esc(FULL.get(ph.fileId) || ph.thumb)}" alt=""></div>
+    <p class="muted">${esc(ph.time)} · ${esc(ph.by)}${ph.lat !== '' && ph.lat != null ? ' · 📍 ' + esc(ph.lat) + ', ' + esc(ph.lon) : ''}
+      <span id="phLoad">${FULL.has(ph.fileId) ? '' : ' · đang tải ảnh gốc…'}</span></p>
+    <div class="row">
+      <button type="button" id="phPrev" ${i > 0 ? '' : 'disabled'}>← Trước</button>
+      <button type="button" id="phNext" ${i < list.length - 1 ? '' : 'disabled'}>Sau →</button>
+      <a id="phDl" download="${esc(ph.name || 'anh.jpg')}" hidden><button type="button">⬇ Tải về</button></a>
+      ${canDel ? '<button type="button" class="danger" id="phDel">Xóa ảnh</button>' : ''}
+    </div>`, false);
+  $('#phPrev').onclick = () => openPhoto(id, i - 1);
+  $('#phNext').onclick = () => openPhoto(id, i + 1);
+  if ($('#phDel')) $('#phDel').onclick = async () => {
+    if (!confirm('Xóa ảnh này? (Ảnh được chuyển vào Thùng rác của Google Drive)')) return;
+    busy(true);
+    try {
+      await call('deletePhoto', ph.fileId);
+      list.splice(list.indexOf(ph), 1);
+      DATA.photos[id] = list.length;
+      FULL.delete(ph.fileId);
+      closeModal();
+      renderPhotoGrid(id);
+      toast('Đã xóa ảnh ✓');
+    } catch (e) { toast('Không xóa được: ' + (e.message || e), 9000); }
+    finally { busy(false); }
   };
-  if (GPS.fix && Date.now() - GPS.fix.timestamp < 15000) { apply(GPS.fix); return; }
-  toast('Đang lấy vị trí…', 3000);
-  navigator.geolocation.getCurrentPosition(apply, gpsError, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+  const show = url => {
+    if (!$('#phBig') || $('#mTitle').textContent.indexOf(`${i + 1}/`) < 0) return;
+    $('#phBig').src = url; $('#phLoad').textContent = '';
+    $('#phDl').href = url; $('#phDl').hidden = false;
+  };
+  if (FULL.has(ph.fileId)) { show(FULL.get(ph.fileId)); return; }
+  try {
+    const r = await call('getPhoto', ph.fileId);
+    const url = 'data:' + r.mime + ';base64,' + r.data;
+    FULL.set(ph.fileId, url);
+    if (FULL.size > 12) FULL.delete(FULL.keys().next().value);
+    show(url);
+  } catch (e) {
+    if ($('#phLoad')) $('#phLoad').textContent = ' · không tải được ảnh gốc: ' + (e.message || e);
+  }
+}
+
+// ---------- Tạo lô mới: điểm hoặc polygon (nút + dưới nút vị trí) ----------
+let NEW = null;   // { mode: 'point' | 'poly', picking, layer, latlng, acc }
+
+const AddCtl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control addctl');
+    const a = L.DomUtil.create('a', '', div);
+    a.href = '#'; a.title = 'Tạo điểm hoặc polygon mới'; a.setAttribute('role', 'button'); a.textContent = '+';
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.on(a, 'click', e => { L.DomEvent.preventDefault(e); openAddMenu(); });
+    return div;
+  }
+});
+new AddCtl().addTo(map);
+
+function openAddMenu() {
+  if (!DATA) return;
+  if (!DATA.user.canEdit) { toast('Tài khoản của bạn chỉ có quyền xem.'); return; }
+  if (!confirmDiscard()) return;
+  openModal('Tạo lô mới', `<div class="addmenu">
+      <button type="button" data-add="gps">📍 <b>Điểm tại vị trí của tôi</b><span class="muted">Lấy tọa độ GPS của điện thoại</span></button>
+      <button type="button" data-add="tap">📌 <b>Điểm chọn trên bản đồ</b><span class="muted">Chạm vào vị trí trên ảnh vệ tinh</span></button>
+      <button type="button" data-add="poly">⬠ <b>Vẽ polygon mới</b><span class="muted">Chạm lần lượt vào các góc lô</span></button>
+    </div>`, false);
+  $('#mBody').querySelectorAll('[data-add]').forEach(b => { b.onclick = () => { closeModal(); startNew(b.dataset.add); }; });
+}
+
+function newPanel(msg) {
+  $('#panelBody').innerHTML = `<button class="link" id="newCancel">✕ Hủy tạo mới</button><h2>Tạo lô mới</h2>
+    <p class="hint">${esc(msg)}</p>`;
+  $('#newCancel').onclick = cancelNew;
+}
+
+function startNew(how) {
+  if (sel) { sel = null; renderLayers(); }
+  NEW = { mode: how === 'poly' ? 'poly' : 'point', picking: false, layer: null, latlng: null };
+  $('#bar').classList.remove('open');
+  if (how === 'gps') {
+    if (!gpsSupported()) { NEW.picking = true; newPanel('Chạm vào vị trí trên bản đồ để đặt điểm.'); return; }
+    newPanel('Đang lấy vị trí của bạn…');
+    setSheet('half');
+    const use = pos => {
+      if (!NEW || NEW.latlng) return;
+      const acc = Math.round(pos.coords.accuracy);
+      if (acc > 30) toast(`Độ chính xác GPS hiện tại ±${acc} m. Có thể kéo điểm cam để chỉnh lại.`, 7000);
+      setNewPoint(L.latLng(pos.coords.latitude, pos.coords.longitude), acc);
+    };
+    if (GPS.fix && Date.now() - GPS.fix.timestamp < 15000) use(GPS.fix);
+    else navigator.geolocation.getCurrentPosition(use, e => {
+      gpsError(e);
+      if (NEW && !NEW.latlng) { NEW.picking = true; newPanel('Không lấy được GPS. Chạm vào bản đồ để chọn vị trí.'); }
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+  } else if (how === 'tap') {
+    NEW.picking = true;
+    newPanel('Chạm vào vị trí trên bản đồ để đặt điểm.');
+    setSheet('peek');
+  } else {
+    newPanel('Chạm lần lượt vào các góc lô trên ảnh vệ tinh. Chạm lại điểm đầu tiên để khép kín, sau đó có thể kéo đỉnh để chỉnh.');
+    setSheet('peek');
+    map.pm.enableDraw('Polygon', { allowSelfIntersection: false, snappable: true });
+    map.once('pm:create', e => {
+      if (!NEW) { map.removeLayer(e.layer); return; }
+      NEW.layer = e.layer;
+      e.layer.setStyle({ color: IMP_COLOR, weight: 3, fillOpacity: 0.2 });
+      e.layer.pm.enable({ allowSelfIntersection: false, snappable: true });
+      e.layer.on('pm:edit pm:change', updateNewInfo);
+      showNewForm();
+      setSheet('half');
+    });
+  }
+}
+
+map.on('click', e => { if (NEW && NEW.picking) setNewPoint(e.latlng); });
+
+function setNewPoint(ll, acc) {
+  NEW.picking = false; NEW.latlng = ll; NEW.acc = acc;
+  if (NEW.layer) NEW.layer.setLatLng(ll);
+  else {
+    NEW.layer = L.marker(ll, { draggable: true, autoPan: true,
+      icon: L.divIcon({ className: 'newpin', html: '<span></span>', iconSize: [22, 22], iconAnchor: [11, 11] }) }).addTo(map);
+    NEW.layer.on('dragend', () => { NEW.latlng = NEW.layer.getLatLng(); NEW.acc = null; updateNewInfo(); });
+  }
+  showNewForm();
+  setSheet('half');
+  panToVisible(ll, Math.max(map.getZoom(), 17));
+}
+
+function stopNew() {
+  if (!NEW) return;
+  const n = NEW;
+  NEW = null;
+  map.pm.disableDraw();
+  map.off('pm:create');
+  if (n.layer) { if (n.layer.pm) n.layer.pm.disable(); map.removeLayer(n.layer); }
+}
+function cancelNew() { stopNew(); showList(); }
+
+function newGeom() { return NEW && NEW.mode === 'poly' && NEW.layer ? NEW.layer.toGeoJSON().geometry : null; }
+function newInfoText() {
+  if (!NEW) return '';
+  if (NEW.mode === 'poly') { const g = newGeom(); return g ? 'Polygon · diện tích đo ' + fmtHa(areaHa(g)) : ''; }
+  const ll = NEW.latlng;
+  return ll ? `Điểm ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}` + (NEW.acc ? ` (GPS ±${NEW.acc} m)` : '') + ' · kéo điểm cam để chỉnh' : '';
+}
+function updateNewInfo() {
+  if ($('#newInfo')) $('#newInfo').textContent = newInfoText();
+  const g = newGeom();
+  if (g && $('#nwArea') && !$('#nwArea').dataset.touched) $('#nwArea').value = (Math.round(areaHa(g) * 100) / 100).toString();
+}
+
+function nearestFarm(ll) {
+  let best = null, bd = Infinity;
+  DATA.lo.rows.forEach(p => {
+    const l = layerById[p.id];
+    const c = l ? (l.getBounds ? l.getBounds().getCenter() : l.getLatLng()) : (pointOf(p) ? L.latLng(pointOf(p)) : null);
+    if (!c) return;
+    const d = map.distance(ll, c);
+    if (d < bd) { bd = d; best = p; }
+  });
+  const f = best && farmOf(best);
+  return f ? { f, d: bd } : null;
+}
+function nextFarmId(base) {
+  const m = String(base || '').match(/^(.*?)(\d+)$/);
+  if (!m) return '';
+  const pre = m[1], w = m[2].length;
+  let max = 0;
+  Object.keys(farms()).forEach(id => {
+    if (id.indexOf(pre) !== 0) return;
+    const rest = id.slice(pre.length);
+    if (/^\d+$/.test(rest)) max = Math.max(max, Number(rest));
+  });
+  return pre + String(max + 1).padStart(w, '0');
+}
+function nextPlotId(farmId) {
+  if (!farmId) return '';
+  let max = 0;
+  Object.keys(byId).forEach(id => {
+    if (id.indexOf(farmId + '-') !== 0) return;
+    const rest = id.slice(farmId.length + 1);
+    if (/^\d+$/.test(rest)) max = Math.max(max, Number(rest));
+  });
+  return farmId + '-' + String(max + 1).padStart(2, '0');
+}
+
+function showNewForm() {
+  const ll = NEW.mode === 'poly' ? NEW.layer.getBounds().getCenter() : NEW.latlng;
+  const near = nearestFarm(ll);
+  const nearTxt = near ? [near.f.props.HoDem, near.f.props.Ten].filter(Boolean).join(' ') : '';
+  const newId = near ? nextFarmId(near.f.id) : '';
+  const dl = (id, vals) => `<datalist id="${id}">` + vals.map(v => `<option value="${esc(v)}">`).join('') + '</datalist>';
+  let h = `<button class="link" id="newCancel">✕ Hủy tạo mới</button><h2>Tạo lô mới</h2>
+    <div class="stats" id="newInfo">${esc(newInfoText())}</div>
+    <div class="field"><label for="nwFarm">Mã hộ <span class="req">*</span></label>
+      <input type="text" id="nwFarm" list="nwFids" autocomplete="off" placeholder="Chọn hộ có sẵn hoặc nhập mã hộ mới">
+      ${dl('nwFids', Object.keys(farms()))}</div>
+    <div class="quick">
+      ${near ? `<button type="button" id="nwNear">Hộ gần nhất: ${esc(near.f.id)}${nearTxt ? ' · ' + esc(nearTxt) : ''} (${Math.round(near.d)} m)</button>` : ''}
+      ${newId ? `<button type="button" id="nwNewFarm">+ Hộ mới: ${esc(newId)}</button>` : ''}
+    </div>
+    <div class="muted" id="nwFarmInfo"></div>
+    <div class="newfarm" id="nwFarmBox" hidden>
+      <div class="muted" style="margin-bottom:8px">Hộ mới – điền thông tin cơ bản (các trường khác sửa sau trong khung thông tin):</div>
+      <div class="field"><label for="nwHoDem">Họ đệm</label><input type="text" id="nwHoDem"></div>
+      <div class="field"><label for="nwTen">Tên <span class="req">*</span></label><input type="text" id="nwTen"></div>
+      <div class="field"><label for="nwXa">Xã/thôn</label><input type="text" id="nwXa" list="nwXas">${dl('nwXas', suggestValues('ho', { col: 'ThonXa' }))}</div>
+      <div class="field"><label for="nwTinh">Tỉnh</label><input type="text" id="nwTinh" list="nwTinhs">${dl('nwTinhs', Array.from(new Set(['Lâm Đồng', 'Sơn La'].concat(suggestValues('ho', { col: 'Tinh' })))))}</div>
+      <div class="progs">${C.programs.map(k => `<label class="prog" style="border-left:5px solid ${PROG_COLOR[k] || NONE_COLOR}"><input type="checkbox" data-nprog="${esc(k)}"> ${esc(k)}</label>`).join('')}</div>
+    </div>
+    <div class="field"><label for="nwId">Mã lô <span class="req">*</span></label><input type="text" id="nwId" autocomplete="off"></div>
+    <div class="field"><label for="nwArea">Diện tích khai báo (ha)</label><input type="text" id="nwArea" inputmode="decimal"></div>
+    <div class="ferr" id="nwErr"></div>
+    <div class="actions"><button id="nwOk" class="primary">Tạo lô</button><button id="nwCancel2">Hủy</button></div>`;
+  $('#panelBody').innerHTML = h;
+  $('#panel').scrollTop = 0;
+  const near0 = near && near.d < 150 ? near.f.id : '';
+  const refreshFarm = () => {
+    const fid = $('#nwFarm').value.trim(), f = farms()[fid];
+    $('#nwFarmBox').hidden = !fid || !!f;
+    $('#nwFarmInfo').innerHTML = f ? 'Hộ có sẵn: <b>' + esc(farmName(f)) + '</b> ' + tagsHtml({ props: { [C.farm]: fid } }) : '';
+    if (!$('#nwId').dataset.touched) $('#nwId').value = nextPlotId(fid);
+  };
+  $('#nwFarm').value = near0;
+  refreshFarm();
+  updateNewInfo();
+  $('#nwFarm').addEventListener('input', refreshFarm);
+  $('#nwId').addEventListener('input', () => { $('#nwId').dataset.touched = '1'; });
+  $('#nwArea').addEventListener('input', () => { $('#nwArea').dataset.touched = '1'; });
+  if ($('#nwNear')) $('#nwNear').onclick = () => { $('#nwFarm').value = near.f.id; delete $('#nwId').dataset.touched; refreshFarm(); };
+  if ($('#nwNewFarm')) $('#nwNewFarm').onclick = () => {
+    $('#nwFarm').value = newId; delete $('#nwId').dataset.touched; refreshFarm();
+    if (near && $('#nwXa') && !$('#nwXa').value) $('#nwXa').value = near.f.props.ThonXa || '';
+    if (near && $('#nwTinh') && !$('#nwTinh').value) $('#nwTinh').value = near.f.props.Tinh || '';
+    $('#nwTen').focus();
+  };
+  $('#newCancel').onclick = cancelNew;
+  $('#nwCancel2').onclick = cancelNew;
+  $('#nwOk').onclick = submitNew;
+}
+
+async function submitNew() {
+  const err = m => { $('#nwErr').textContent = m; toast(m, 6000); };
+  const farmId = $('#nwFarm').value.trim(), id = $('#nwId').value.trim();
+  if (!NEW || (NEW.mode === 'poly' ? !NEW.layer : !NEW.latlng)) return err('Chưa có vị trí / polygon.');
+  if (!farmId) return err('Nhập mã hộ.');
+  if (!id) return err('Nhập mã lô.');
+  if (byId[id]) return err('Mã lô ' + id + ' đã có.');
+  const isNewFarm = !farms()[farmId];
+  if (isNewFarm && !$('#nwTen').value.trim()) return err('Hộ mới: nhập tên chủ hộ.');
+  const area = $('#nwArea').value.trim();
+  if (area && isNaN(numOf(area))) return err('Diện tích phải là số.');
+  const programs = {};
+  document.querySelectorAll('[data-nprog]').forEach(el => { programs[el.dataset.nprog] = el.checked; });
+  const item = { id, farmId, area, programs,
+    geometry: newGeom(),
+    lat: NEW.mode === 'point' ? NEW.latlng.lat : null, lon: NEW.mode === 'point' ? NEW.latlng.lng : null,
+    farm: isNewFarm ? { HoDem: $('#nwHoDem').value.trim(), Ten: $('#nwTen').value.trim(),
+      ThonXa: $('#nwXa').value.trim(), Tinh: $('#nwTinh').value.trim() } : null };
+  busy(true);
+  $('#nwOk').disabled = true;
+  try {
+    const r = await call('createPlot', item);
+    farms()[r.ho.id] = r.ho;
+    replacePlot(r.lo);
+    stopNew();
+    renderChips();
+    sel = r.lo.id;
+    renderLayers();
+    showPlot(sel, true);
+    toast(`Đã tạo lô ${r.lo.id}` + (r.newFarm ? ` và hộ mới ${r.ho.id}` : '') + ' ✓', 5000);
+  } catch (e) {
+    err('Không tạo được: ' + (e.message || e));
+    if ($('#nwOk')) $('#nwOk').disabled = false;
+  } finally {
+    busy(false);
+  }
 }
 
 // ---------- Sự kiện ----------
