@@ -210,7 +210,10 @@
   /* Nút + và tạo lô mới */
   .addctl a { font-size: 26px; font-weight: 600; line-height: 28px !important; }
   .addmenu { display: grid; gap: 8px; padding: 12px 0 4px; }
-  .addmenu button { display: grid; gap: 2px; text-align: left; white-space: normal; padding: 12px 14px; font-size: 15px; }
+  .addmenu button { display: grid; grid-template-columns: 32px 1fr; align-items: center; gap: 2px 8px; text-align: left;
+    white-space: normal; padding: 12px 14px; font-size: 15px; }
+  .addmenu .ic { grid-row: span 2; font-size: 22px; text-align: center; }
+  #mFoot[hidden] { display: none; }
   .newpin span { display: block; width: 22px; height: 22px; border-radius: 50%; background: #ff7a00; border: 3px solid #fff;
     box-shadow: 0 0 0 2px #ff7a00, 0 2px 6px rgba(0,0,0,.5); }
   .quick { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
@@ -1511,9 +1514,9 @@ function openAddMenu() {
   if (!DATA.user.canEdit) { toast('Tài khoản của bạn chỉ có quyền xem.'); return; }
   if (!confirmDiscard()) return;
   openModal('Tạo lô mới', `<div class="addmenu">
-      <button type="button" data-add="gps">📍 <b>Điểm tại vị trí của tôi</b><span class="muted">Lấy tọa độ GPS của điện thoại</span></button>
-      <button type="button" data-add="tap">📌 <b>Điểm chọn trên bản đồ</b><span class="muted">Chạm vào vị trí trên ảnh vệ tinh</span></button>
-      <button type="button" data-add="poly">⬠ <b>Vẽ polygon mới</b><span class="muted">Chạm lần lượt vào các góc lô</span></button>
+      <button type="button" data-add="gps"><span class="ic">📍</span><b>Điểm tại vị trí của tôi</b><span class="muted">Lấy tọa độ GPS của điện thoại</span></button>
+      <button type="button" data-add="tap"><span class="ic">📌</span><b>Điểm chọn trên bản đồ</b><span class="muted">Chạm vào vị trí trên ảnh vệ tinh</span></button>
+      <button type="button" data-add="poly"><span class="ic">⬠</span><b>Vẽ polygon mới</b><span class="muted">Chạm lần lượt vào các góc lô</span></button>
     </div>`, false);
   $('#mBody').querySelectorAll('[data-add]').forEach(b => { b.onclick = () => { closeModal(); startNew(b.dataset.add); }; });
 }
@@ -1575,7 +1578,7 @@ function setNewPoint(ll, acc) {
   }
   showNewForm();
   setSheet('half');
-  panToVisible(ll, Math.max(map.getZoom(), 17));
+  setTimeout(() => panToVisible(ll, Math.max(map.getZoom(), 17)), 250);   // chờ khung thông tin mở xong
 }
 
 function stopNew() {
