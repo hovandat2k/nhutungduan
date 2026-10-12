@@ -59,6 +59,11 @@
     border: 1.5px solid var(--muted); font-size: 12px; font-weight: 700; color: #fff; }
   .chip.on .tick { background: var(--accent); border-color: var(--accent); }
   .chips-t { font-size: 13px; color: var(--muted); align-self: center; }
+  .dl { display: grid; gap: 10px; padding: 12px 0 4px; }
+  .dl-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .dl-t { display: flex; align-items: center; gap: 8px; }
+  .dl-b { display: flex; gap: 8px; flex-wrap: wrap; }
   .eudr-legend { background: var(--bg); color: var(--fg); padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.6;
     box-shadow: 0 2px 8px rgba(0,0,0,.3); }
   .eudr-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
@@ -239,7 +244,7 @@
     <div id="chips"></div>
     <div id="busy"></div>
     <button id="btnImport" class="tool" title="Nhập ranh giới từ file KML/KMZ">⬆ <span class="btxt">Nhập KML</span></button>
-    <button id="btnExport" class="tool" title="Xuất file GMR RA (.xlsx) và KML" hidden>⬇ <span class="btxt">Xuất RA</span></button>
+    <button id="btnExport" class="tool" title="Tải file GMR / BPM / KML của từng chứng nhận" hidden>⬇ <span class="btxt">Download</span></button>
     <button id="btnReload" class="tool" title="Tải lại dữ liệu mới nhất">⟳ <span class="btxt mob">Tải lại</span></button>
     <input id="file" type="file" accept=".kml,.kmz" hidden>
   </div>
@@ -1276,23 +1281,47 @@ async function readKmlFile(f) {
   return f.text();
 }
 
-// ---------- Xuất file ----------
-async function doExport() {
+// ---------- Download: GMR (RA) / BPM (4C) / KML theo từng chứng nhận ----------
+const DL_ITEMS = [
+  ['RA', [['xlsx', 'GMR (.xlsx)'], ['kml', 'KML']]],
+  ['4C1', [['xlsx', 'BPM (.xlsx)'], ['kml', 'KML']]],
+  ['4C2', [['xlsx', 'BPM (.xlsx)'], ['kml', 'KML']]],
+  ['4C3', [['xlsx', 'BPM (.xlsx)'], ['kml', 'KML']]]
+];
+function doExport() {
   if (!confirmDiscard()) return;
-  if (!confirm('Xuất file GMR RA (.xlsx) và KML từ dữ liệu hiện tại?')) return;
+  $('#bar').classList.remove('open');
+  const count = k => DATA.lo.rows.filter(p => progsOf(p).includes(k)).length;
+  openModal('Download', `<div class="dl">` + DL_ITEMS.map(([k, opts]) =>
+    `<div class="dl-row"><div class="dl-t"><span class="dot" style="background:${PROG_COLOR[k] || NONE_COLOR}"></span><b>${esc(k)}</b>
+      <span class="muted">${count(k)} lô</span></div><div class="dl-b">` +
+    opts.map(([kind, label]) => `<button type="button" data-dl="${k}|${kind}">⬇ ${esc(label)}</button>`).join('') +
+    `</div></div>`).join('') +
+    `<p class="muted" id="dlMsg">File được tạo từ dữ liệu mới nhất trong Sheet. Bản .xlsx cũng được lưu vào thư mục xuất trên Drive.</p></div>`, false);
+  $('#mBody').querySelectorAll('[data-dl]').forEach(b => { b.onclick = () => downloadOne(b, ...b.dataset.dl.split('|')); });
+}
+function saveBlob(name, mime, b64) {
+  const bin = atob(b64), arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([arr], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+async function downloadOne(btn, code, kind) {
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ Đang tạo…';
   busy(true);
-  $('#btnExport').disabled = true;
   try {
-    const r = await call('exportProgram', 'RA');
-    openModal('Đã xuất file RA', `<p>${r.farms} hộ · ${r.plots} lô</p>
-      <p>📄 <a href="${esc(r.xlsxUrl)}" target="_blank" rel="noopener">${esc(r.name)}.xlsx</a></p>
-      <p>🗺 <a href="${esc(r.kmlUrl)}" target="_blank" rel="noopener">File KML polygon</a></p>
-      <p class="muted">File nằm trong thư mục xuất đã cấu hình ở sheet CauHinh.</p>`, false);
+    const r = await call('downloadFile', code, kind);
+    saveBlob(r.name, r.mime, r.data);
+    $('#dlMsg').innerHTML = `Đã tải <b>${esc(r.name)}</b> (${r.farms} hộ · ${r.plots} lô)` +
+      (r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">mở bản trên Drive</a>` : '');
   } catch (e) {
-    toast('Không xuất được: ' + (e.message || e), 10000);
+    $('#dlMsg').innerHTML = '<span class="err">Không tạo được ' + esc(code + ' ' + kind.toUpperCase()) + ': ' + esc(e.message || e) + '</span>';
   } finally {
+    btn.disabled = false; btn.textContent = label;
     busy(false);
-    $('#btnExport').disabled = false;
   }
 }
 
