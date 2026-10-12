@@ -401,6 +401,32 @@ const NorthCtl = L.Control.extend({
   }
 });
 const northCtl = new NorthCtl().addTo(map);
+
+// Chụm 2 ngón để phóng to/thu nhỏ: chỉ xoay khi xoay 2 ngón rõ ràng (> 12°), tránh xoay nhẹ ngoài ý muốn
+// (mỗi lần xoay phải vẽ lại toàn bộ lô nên làm polygon chạy chậm hơn ảnh nền)
+(function () {
+  const tg = map.touchGestures;
+  if (!tg || !tg._onTouchMove) return;
+  const move = tg._onTouchMove, end = tg._onTouchEnd, R2D = 180 / Math.PI;
+  tg._onTouchMove = function (e) {
+    if (this._rotating && e.touches && e.touches.length === 2 && !this._rotOn) {
+      const m = this._map, v = m.mouseEventToContainerPoint(e.touches[0]).subtract(m.mouseEventToContainerPoint(e.touches[1]));
+      const th = Math.atan(v.x / v.y);
+      let d = (th - this._startTheta) * R2D;
+      d = ((d + 90) % 180 + 180) % 180 - 90;
+      if (Math.abs(d) < 12) {
+        this._rotating = false;
+        try { move.call(this, e); } finally { this._rotating = true; }
+        return;
+      }
+      this._rotOn = true;                                    // bắt đầu xoay từ hướng hiện tại, không giật
+      this._startTheta = th;
+      this._startBearing = m.getBearing() + (v.y < 0 ? 180 : 0);
+    }
+    return move.call(this, e);
+  };
+  tg._onTouchEnd = function (e) { this._rotOn = false; return end.call(this, e); };
+})();
 function northStyle() {
   const b = map.getBearing() || 0;
   northCtl._svg.style.transform = 'rotate(' + b + 'deg)';
@@ -437,6 +463,25 @@ function setEudr(on) {
 }
 const plotGroup = L.featureGroup().addTo(map);
 const plotCanvas = L.canvas({ padding: 0.5, tolerance: 4 });   // vẽ hàng nghìn lô nhanh hơn SVG
+// Khi xoay, plugin vẽ lại toàn bộ lô ở mỗi sự kiện: gộp lại tối đa 1 lần mỗi khung hình
+(function () {
+  const ge = plotCanvas.getEvents;
+  plotCanvas.getEvents = function () {
+    const ev = ge.call(this), self = this;
+    if (ev.rotate) {
+      let raf = 0;
+      ev.rotate = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (self._map) self._update(); }); };
+    }
+    return ev;
+  };
+})();
+// Bán kính điểm theo mức phóng: nhỏ khi nhìn xa để không che nhau
+function ptRadius(z) { return z <= 10 ? 2 : z <= 12 ? 3 : z <= 14 ? 4 : z <= 16 ? 5 : 6; }
+function ptStyle() { const r = ptRadius(map.getZoom()); return { radius: r, weight: r <= 3 ? 1 : 2 }; }
+map.on('zoomend', () => {
+  const st = ptStyle();
+  Object.values(layerById).forEach(l => { if (l instanceof L.CircleMarker) { l.setRadius(st.radius); l.setStyle({ weight: st.weight }); } });
+});
 map.pm.setGlobalOptions({ allowSelfIntersection: false, snappable: true, snapDistance: 15 });
 
 // ---------- Diện tích (giống Code.gs) ----------
@@ -650,7 +695,7 @@ function renderLayers() {
       try { layer = L.geoJSON(p.geometry, { style: styleFor(p), renderer: plotCanvas }).getLayers()[0]; } catch (e) { layer = null; }
     } else {
       const ll = pointOf(p);
-      if (ll) layer = L.circleMarker(ll, { radius: 6, color: '#fff', weight: 2, fillColor: colorOf(p), fillOpacity: 1, renderer: plotCanvas });
+      if (ll) layer = L.circleMarker(ll, Object.assign({ color: '#fff', fillColor: colorOf(p), fillOpacity: 1, renderer: plotCanvas }, ptStyle()));
     }
     if (!layer) return;
     layer.on('click', () => { if (!NEW && !map.pm.globalDrawModeEnabled()) select(p.id); });
