@@ -1,0 +1,48 @@
+{
+  "packageId": "vn.nhutung.lovuon",
+  "host": "hovandat2k.github.io",
+  "name": "Như Tùng – Bản đồ lô vườn",
+  "launcherName": "Lô vườn",
+  "display": "standalone",
+  "themeColor": "#0b7a53",
+  "themeColorDark": "#0b7a53",
+  "navigationColor": "#000000",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#365a1a",
+  "enableNotifications": false,
+  "startUrl": "/nhutungduan/",
+  "iconUrl": "https://hovandat2k.github.io/nhutungduan/icons/icon-512.png",
+  "maskableIconUrl": "https://hovandat2k.github.io/nhutungduan/icons/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./lovuon.keystore",
+    "alias": "lovuon"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://hovandat2k.github.io/nhutungduan/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {
+    "locationDelegation": {
+      "enabled": true
+    }
+  },
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://hovandat2k.github.io/nhutungduan/",
+  "minSdkVersion": 21,
+  "orientation": "portrait",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": []
+}

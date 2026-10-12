@@ -1,0 +1,14 @@
+*.keystore
+*.jks
+*.apk
+*.aab
+app/
+build/
+.gradle/
+gradle/
+gradlew*
+build.gradle
+settings.gradle
+gradle.properties
+manifest-checksum.txt
+store_icon.png

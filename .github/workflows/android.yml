@@ -1,0 +1,119 @@
+# Dựng app Android (TWA) từ trang bản đồ GitHub Pages bằng Bubblewrap.
+# Cần 2 secret trong Settings → Secrets and variables → Actions:
+#   ANDROID_KEYSTORE_B64       : nội dung file lovuon.keystore mã hóa base64
+#   ANDROID_KEYSTORE_PASSWORD  : mật khẩu keystore (cũng là mật khẩu khóa)
+# Kết quả: bản phát hành mới trong mục Releases, file NhuTung-LoVuon.apk (cài trực tiếp)
+# và NhuTung-LoVuon.aab (dùng nếu đưa lên Google Play).
+name: Android app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'manifest.webmanifest'
+      - 'icons/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kiểm tra secret khóa ký
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS" ] || [ -z "$BUBBLEWRAP_KEYSTORE_PASSWORD" ]; then
+            echo "::error::Chưa có secret ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          echo "$KS" | base64 -d > android/lovuon.keystore
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Chuẩn bị Android SDK và Bubblewrap
+        run: |
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          SDKM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "build-tools;34.0.0" "build-tools;35.0.0" "platforms;android-35" "platform-tools" > /dev/null
+          # Bubblewrap tìm sdkmanager ở thư mục tools/ kiểu cũ
+          if [ ! -e "$SDK/tools/bin/sdkmanager" ]; then
+            mkdir -p "$SDK/tools" && ln -sfn "$SDK/cmdline-tools/latest/bin" "$SDK/tools/bin"
+          fi
+          npm install -g @bubblewrap/cli
+          mkdir -p ~/.bubblewrap
+          printf '{"jdkPath":"%s","androidSdkPath":"%s"}\n' "$JAVA_HOME" "$SDK" > ~/.bubblewrap/config.json
+          cat ~/.bubblewrap/config.json
+
+      - name: Đặt số phiên bản
+        working-directory: android
+        run: |
+          jq --argjson c ${{ github.run_number }} --arg n "1.0.${{ github.run_number }}" \
+            '.appVersionCode=$c | .appVersionName=$n' twa-manifest.json > t.json && mv t.json twa-manifest.json
+
+      - name: Tạo dự án Android
+        working-directory: android
+        run: bubblewrap update --skipVersionUpgrade
+
+      - name: Dựng và ký APK / AAB
+        working-directory: android
+        run: |
+          bubblewrap build --skipPwaValidation
+          ls -la *.apk *.aab
+          mkdir -p ../dist
+          cp app-release-signed.apk ../dist/NhuTung-LoVuon.apk
+          cp app-release-bundle.aab ../dist/NhuTung-LoVuon.aab
+
+      - name: Tạo assetlinks.json (vân tay khóa ký)
+        run: |
+          FP=$(keytool -list -v -keystore android/lovuon.keystore -alias lovuon \
+               -storepass "$BUBBLEWRAP_KEYSTORE_PASSWORD" | awk '/SHA256:/{print $2; exit}')
+          echo "SHA256 fingerprint: $FP"
+          cat > dist/assetlinks.json <<EOF
+          [{
+            "relation": ["delegate_permission/common.handle_all_urls"],
+            "target": {
+              "namespace": "android_app",
+              "package_name": "vn.nhutung.lovuon",
+              "sha256_cert_fingerprints": ["$FP"]
+            }
+          }]
+          EOF
+          rm -f android/lovuon.keystore
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-app
+          path: dist/
+
+      - name: Phát hành
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="android-v1.0.${{ github.run_number }}"
+          gh release create "$TAG" dist/NhuTung-LoVuon.apk dist/NhuTung-LoVuon.aab dist/assetlinks.json \
+            --title "App Android 1.0.${{ github.run_number }}" \
+            --notes "Cài trên Android: tải NhuTung-LoVuon.apk, mở file, cho phép cài từ nguồn này. Bản này tự cập nhật đè lên bản cũ." \
+            --latest
