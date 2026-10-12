@@ -238,6 +238,8 @@
   .northctl a { display: flex !important; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
   .northctl svg { width: 22px; height: 22px; transition: transform .15s; }
   .northctl.off { display: none; }
+  .headcone { pointer-events: none; }
+  .headcone svg { display: block; transition: transform .12s linear; }
   .addmenu { display: grid; gap: 8px; padding: 12px 0 4px; }
   .addmenu button { display: grid; grid-template-columns: 32px 1fr; align-items: center; gap: 2px 8px; text-align: left;
     white-space: normal; padding: 12px 14px; font-size: 15px; }
@@ -540,6 +542,8 @@ function toast(msg, ms = 3500) {
 const farms = () => DATA.ho.rows;
 const farmOf = p => farms()[String(p.props[C.farm] ?? '').trim()];
 const progsOf = p => { const f = farmOf(p); return f ? C.programs.filter(k => f.props[k] === true) : []; };
+// Nguồn diện tích khai báo: lô RA lấy theo GMR, lô chỉ có 4C lấy theo BPM
+const srcLabel = p => { const pr = progsOf(p); return pr.includes('RA') ? 'GMR' : pr.some(k => /^4C/.test(k)) ? 'BPM' : 'khai báo'; };
 function colorOf(p) {
   const pr = progsOf(p);
   // Mọi hộ đều RA nên tô màu theo nhóm 4C nếu có; chỉ RA -> xanh lá
@@ -963,7 +967,7 @@ function runChecks(p, f) {
   const g = geomEdit && geomEdit.layer ? currentGeom() : (geomRemoved ? null : p.geometry);
   if (g && decl) {
     const meas = areaHa(g), dv = (meas - decl) / decl * 100;
-    if (Math.abs(dv) > 20) out.push(['warn', `Diện tích đo từ polygon ${fmt(meas)} ha lệch ${dv > 0 ? '+' : ''}${fmt(dv)}% so với khai báo ${fmt(decl)} ha`]);
+    if (Math.abs(dv) > 20) out.push(['warn', `Diện tích đo từ polygon ${fmt(meas)} ha lệch ${dv > 0 ? '+' : ''}${fmt(dv)}% so với ${srcLabel(p)} ${fmt(decl)} ha`]);
   }
   const lat = numOf(curVal('lo', p, C.lat)), lon = numOf(curVal('lo', p, C.lon));
   if (lat != null && lon != null && !isNaN(lat) && !isNaN(lon)) {
@@ -1000,7 +1004,7 @@ function showPlot(id, zoom) {
     <div class="who">${f ? esc([f.props.HoDem, f.props.Ten].filter(Boolean).join(' ')) : ''}<span class="muted">${f ? ' · ' + esc(f.id) : ''}</span></div>
     <div class="stats">
       Diện tích đo từ polygon: <b id="areaVal">${area != null ? fmtHa(area) : '—'}</b>
-      · khai báo: <b>${esc(p.props.DienTich_ha ?? '—')}</b> ha
+      · ${srcLabel(p)}: <b>${esc(p.props.DienTich_ha ?? '—')}</b> ha
     </div>`;
   if (p.props.__geomError) h += `<p class="err">Ô Polygon của lô này chứa dữ liệu không đọc được. Vẽ lại hoặc nhập lại từ KML.</p>`;
   if (!p.geometry) h += `<p class="muted">Lô chưa có ranh giới${pointOf(p) ? ' (đang hiện điểm GPS)' : ' và chưa có điểm GPS'}.</p>`;
@@ -1489,11 +1493,60 @@ function gpsOnFix(pos) {
     GPS.marker.setLatLng(ll);
     GPS.acc.setLatLng(ll).setRadius(pos.coords.accuracy);
   }
+  headDraw();
   GPS.inPlot = DATA ? plotAt(ll.lat, ll.lng) : null;
   gpsUpdateBadge();
   if (GPS.first) { GPS.first = false; panToVisible(ll, Math.max(map.getZoom(), 17)); }
   else if (GPS.follow) panToVisible(ll);
 }
+// ---------- Hướng điện thoại (la bàn của máy): hình quạt xanh trên chấm vị trí ----------
+const HEAD = { listening: false, deg: null, marker: null, raf: 0, evt: null };
+function headFromEvent(e) {
+  let h = null;
+  if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) h = e.webkitCompassHeading;   // iPhone
+  else if (e.alpha != null && (e.absolute || HEAD.evt === 'deviceorientationabsolute')) h = 360 - e.alpha;        // Android
+  if (h == null) return;
+  const so = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  h = ((h + so) % 360 + 360) % 360;
+  // làm mượt (tránh nhảy qua 0°/360°)
+  if (HEAD.deg == null) HEAD.deg = h;
+  else { const d = ((h - HEAD.deg) % 360 + 540) % 360 - 180; HEAD.deg += d * 0.3; }   // không quy về 0–360 để hình quạt không quay ngược một vòng
+  if (!HEAD.raf) HEAD.raf = requestAnimationFrame(() => { HEAD.raf = 0; headDraw(); });
+}
+function headStart() {
+  if (HEAD.listening || typeof DeviceOrientationEvent === 'undefined') return;
+  const listen = () => {
+    if (HEAD.listening) return;
+    HEAD.evt = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+    window.addEventListener(HEAD.evt, headFromEvent);
+    HEAD.listening = true;
+  };
+  // iPhone cần xin quyền (chỉ được khi người dùng vừa bấm nút)
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission().then(st => { if (st === 'granted') listen(); }).catch(() => {});
+  } else listen();
+}
+function headStop() {
+  if (HEAD.listening) window.removeEventListener(HEAD.evt, headFromEvent);
+  HEAD.listening = false; HEAD.deg = null;
+  if (HEAD.marker) { map.removeLayer(HEAD.marker); HEAD.marker = null; }
+}
+function headDraw() {
+  if (HEAD.deg == null || !GPS.marker) return;
+  const ll = GPS.marker.getLatLng();
+  if (!HEAD.marker) {
+    HEAD.marker = L.marker(ll, { interactive: false, keyboard: false, zIndexOffset: -1000,
+      icon: L.divIcon({ className: 'headcone', iconSize: [96, 96], iconAnchor: [48, 48],
+        html: '<svg width="96" height="96" viewBox="-48 -48 96 96"><defs><radialGradient id="hcg" cx="0" cy="0" r="46" gradientUnits="userSpaceOnUse">' +
+          '<stop offset="0.2" stop-color="#1a73e8" stop-opacity=".75"/><stop offset="1" stop-color="#1a73e8" stop-opacity="0"/></radialGradient></defs>' +
+          '<path d="M-4.2 -10.2 L-19.5 -41.7 A46 46 0 0 1 19.5 -41.7 L4.2 -10.2 A11 11 0 0 0 -4.2 -10.2 Z" fill="url(#hcg)"/></svg>' })
+    }).addTo(map);
+  } else HEAD.marker.setLatLng(ll);
+  const svg = HEAD.marker._icon && HEAD.marker._icon.firstChild;
+  if (svg) svg.style.transform = 'rotate(' + ((map.getBearing() || 0) + HEAD.deg) + 'deg)';
+}
+map.on('rotate', headDraw);
+
 const GPS_KEY = 'lv_gps';
 function gpsRemember(v) { try { localStorage.setItem(GPS_KEY, v ? '1' : '0'); } catch (e) {} }
 function gpsStart(quiet) {
@@ -1501,6 +1554,7 @@ function gpsStart(quiet) {
   GPS.first = !quiet; GPS.follow = !quiet;
   gpsRemember(true);
   GPS.watch = navigator.geolocation.watchPosition(gpsOnFix, gpsError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 30000 });
+  headStart();
   gpsStyle();
   if (!quiet) toast('Đang lấy vị trí…', 2500);
 }
@@ -1508,6 +1562,7 @@ function gpsStop() {
   if (GPS.watch != null) navigator.geolocation.clearWatch(GPS.watch);
   GPS.watch = null; GPS.follow = false; GPS.fix = null; GPS.inPlot = null;
   if (GPS.marker) { map.removeLayer(GPS.marker); map.removeLayer(GPS.acc); GPS.marker = GPS.acc = null; }
+  headStop();
   gpsUpdateBadge();
   gpsStyle();
 }
@@ -1527,7 +1582,7 @@ const LocateCtl = L.Control.extend({
     L.DomEvent.on(a, 'click', e => {
       L.DomEvent.preventDefault(e);
       if (GPS.watch == null) gpsStart();
-      else if (!GPS.follow) { GPS.follow = true; gpsStyle(); if (GPS.fix) panToVisible(L.latLng(GPS.fix.coords.latitude, GPS.fix.coords.longitude), Math.max(map.getZoom(), 17)); }
+      else if (!GPS.follow) { headStart(); GPS.follow = true; gpsStyle(); if (GPS.fix) panToVisible(L.latLng(GPS.fix.coords.latitude, GPS.fix.coords.longitude), Math.max(map.getZoom(), 17)); }
       else { gpsStop(); gpsRemember(false); }
     });
     return div;
