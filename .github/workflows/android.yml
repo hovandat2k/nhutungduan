@@ -41,7 +41,17 @@ jobs:
             echo "::error::Chưa có secret ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD (Settings → Secrets and variables → Actions)."
             exit 1
           fi
-          echo "$KS" | base64 -d > android/lovuon.keystore
+          printf '%s' "$KS" | tr -cd 'A-Za-z0-9+/=' | base64 -d > android/lovuon.keystore
+          # mật khẩu chỉ gồm chữ và số: bỏ khoảng trắng, xuống dòng, ký tự lạ lẫn vào khi dán
+          PW=$(printf '%s' "$BUBBLEWRAP_KEYSTORE_PASSWORD" | tr -cd 'A-Za-z0-9')
+          echo "::add-mask::$PW"
+          echo "Độ dài mật khẩu sau khi làm sạch: ${#PW} (đúng là 20)"
+          if ! keytool -list -keystore android/lovuon.keystore -storepass "$PW" > /dev/null 2>&1; then
+            echo "::error::Mật khẩu hoặc keystore không khớp. Kiểm tra lại 2 secret (dán đúng dòng mật khẩu 20 ký tự và nguyên chuỗi base64)."
+            exit 1
+          fi
+          echo "BUBBLEWRAP_KEYSTORE_PASSWORD=$PW" >> "$GITHUB_ENV"
+          echo "BUBBLEWRAP_KEY_PASSWORD=$PW" >> "$GITHUB_ENV"
 
       - uses: actions/setup-java@v5
         with:
