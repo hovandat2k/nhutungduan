@@ -2,8 +2,8 @@
 # Cần 2 secret trong Settings → Secrets and variables → Actions:
 #   ANDROID_KEYSTORE_B64       : nội dung file lovuon.keystore mã hóa base64
 #   ANDROID_KEYSTORE_PASSWORD  : mật khẩu keystore (cũng là mật khẩu khóa)
-# Kết quả: bản phát hành mới trong mục Releases, file NhuTung-LoVuon.apk (cài trực tiếp)
-# và NhuTung-LoVuon.aab (dùng nếu đưa lên Google Play).
+# Kết quả: bản phát hành mới trong mục Releases, file NhuTung-DuAn.apk (cài trực tiếp)
+# và NhuTung-DuAn.aab (dùng nếu đưa lên Google Play).
 name: Android app
 
 on:
@@ -79,12 +79,19 @@ jobs:
 
       - name: Dựng và ký APK / AAB
         working-directory: android
+        shell: bash
         run: |
-          bubblewrap build --skipPwaValidation
+          set -o pipefail
+          if ! bubblewrap build --skipPwaValidation 2>&1 | tee build.log; then
+            # đưa phần cuối nhật ký lên thành chú thích lỗi để đọc được từ API
+            msg=$(tail -n 60 build.log | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+            echo "::error title=bubblewrap build::$msg"
+            exit 1
+          fi
           ls -la *.apk *.aab
           mkdir -p ../dist
-          cp app-release-signed.apk ../dist/NhuTung-LoVuon.apk
-          cp app-release-bundle.aab ../dist/NhuTung-LoVuon.aab
+          cp app-release-signed.apk ../dist/NhuTung-DuAn.apk
+          cp app-release-bundle.aab ../dist/NhuTung-DuAn.aab
 
       - name: Tạo assetlinks.json (vân tay khóa ký)
         run: |
@@ -113,7 +120,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="android-v1.0.${{ github.run_number }}"
-          gh release create "$TAG" dist/NhuTung-LoVuon.apk dist/NhuTung-LoVuon.aab dist/assetlinks.json \
+          gh release create "$TAG" dist/NhuTung-DuAn.apk dist/NhuTung-DuAn.aab dist/assetlinks.json \
             --title "App Android 1.0.${{ github.run_number }}" \
-            --notes "Cài trên Android: tải NhuTung-LoVuon.apk, mở file, cho phép cài từ nguồn này. Bản này tự cập nhật đè lên bản cũ." \
+            --notes "Cài trên Android: tải NhuTung-DuAn.apk, mở file, cho phép cài từ nguồn này. Bản này tự cập nhật đè lên bản cũ." \
             --latest
