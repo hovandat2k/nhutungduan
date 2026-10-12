@@ -387,18 +387,28 @@ const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
   set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
 };
+// Dữ liệu lớn được máy chủ nén gzip (nhỏ hơn ~7 lần), trình duyệt tự giải nén
+const CAN_GZ = typeof DecompressionStream !== 'undefined';
+async function gunzip64(b64) {
+  const bin = atob(b64), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+}
 async function api(action, payload) {
   if (!API_URL || /XXXX/.test(API_URL)) throw new Error('Chưa cấu hình địa chỉ cổng dữ liệu (config.js).');
   let r;
   try {
     r = await fetch(API_URL, { method: 'POST', redirect: 'follow',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(Object.assign({ action, token: store.get(TOKEN_KEY) }, payload)) });
+      body: JSON.stringify(Object.assign({ action, token: store.get(TOKEN_KEY), gz: CAN_GZ ? 1 : 0 }, payload)) });
   } catch (e) {
     throw new Error('Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.');
   }
   let j;
-  try { j = await r.json(); } catch (e) { throw new Error('Máy chủ trả về dữ liệu lạ (mã ' + r.status + ').'); }
+  try {
+    j = await r.json();
+    if (j.gz) j = { ok: true, data: JSON.parse(await gunzip64(j.gz)) };
+  } catch (e) { throw new Error('Máy chủ trả về dữ liệu lạ (mã ' + r.status + ').'); }
   if (!j.ok) {
     if (j.auth) { store.set(TOKEN_KEY, null); showLogin(j.error); }
     const err = new Error(j.error || 'Lỗi không xác định');
