@@ -17,6 +17,13 @@ self.addEventListener('fetch', e => {
   const isShell = url.origin === location.origin;
   const isLib = /cdnjs\.cloudflare\.com|unpkg\.com/.test(url.host);
   if (!isShell && !isLib) return;               // ảnh vệ tinh, cổng dữ liệu: đi thẳng mạng
+  if (isLib) {                                  // thư viện có số phiên bản cố định: lấy bản đã lưu, khỏi chờ mạng
+    e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => {
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
+      return res;
+    })));
+    return;
+  }
   e.respondWith(
     fetch(req).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }

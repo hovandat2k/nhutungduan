@@ -75,6 +75,16 @@
     background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px;
     font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.25); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #gps[hidden] { display: none; }
+  #geoBar { position: absolute; z-index: 1001; left: 50%; transform: translateX(-50%); top: 10px; display: flex;
+    align-items: center; gap: 10px; padding: 5px 5px 5px 14px; background: var(--bg); color: var(--fg);
+    border-radius: 999px; box-shadow: 0 2px 10px rgba(0,0,0,.3); white-space: nowrap; max-width: 94%; }
+  #geoBar[hidden] { display: none; }
+  #geoBar .lbl { font-size: 12px; color: var(--muted, #64748b); }
+  #geoArea { font-size: 18px; }
+  #geoUndo { min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--soft); color: var(--fg); font: inherit; font-weight: 600; cursor: pointer; }
+  #geoUndo:disabled { opacity: .4; cursor: default; }
+  #mapWrap.editing #gps { display: none; }
   #gps b { color: var(--accent); }
   .locate a { font-size: 20px; line-height: 30px !important; }
   .locate.on a { color: #1a73e8 !important; }
@@ -101,6 +111,7 @@
     .chip { padding: 8px 12px; flex: none; }
     #busy { position: absolute; right: 64px; top: 22px; }
     #gps { top: 62px; }
+    #geoBar { top: 62px; }
     .leaflet-top { top: 56px; }
     .leaflet-control-zoom { display: none; }
     .leaflet-touch .leaflet-bar a { width: 44px; height: 44px; line-height: 44px !important; }
@@ -248,7 +259,7 @@
     <button id="btnReload" class="tool" title="Tải lại dữ liệu mới nhất">⟳ <span class="btxt mob">Tải lại</span></button>
     <input id="file" type="file" accept=".kml,.kmz" hidden>
   </div>
-  <div id="mapWrap"><div id="map"></div><div id="gps" hidden></div></div>
+  <div id="mapWrap"><div id="map"></div><div id="gps" hidden></div><div id="geoBar" hidden><span class="lbl">Diện tích</span><b id="geoArea">—</b><button type="button" id="geoUndo" title="Hoàn tác thao tác vừa rồi">↶ Quay lại</button></div></div>
   <aside id="panel" data-state="half"><div id="grab" title="Kéo lên / xuống"></div><div id="panelBody"><p class="muted">Đang tải dữ liệu…</p></div></aside>
 </div>
 
@@ -279,7 +290,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const FOCUS_ID = new URLSearchParams(location.search).get('lo') || '';
 
@@ -337,6 +347,7 @@ function setEudr(on) {
   else { map.removeLayer(eudrLayer); eudrLegend.remove(); }
 }
 const plotGroup = L.featureGroup().addTo(map);
+const plotCanvas = L.canvas({ padding: 0.5, tolerance: 4 });   // vẽ hàng nghìn lô nhanh hơn SVG
 map.pm.setGlobalOptions({ allowSelfIntersection: false, snappable: true, snapDistance: 15 });
 
 // ---------- Diện tích (giống Code.gs) ----------
@@ -464,7 +475,7 @@ function renderChips() {
   if (!Object.keys(filter).length) {
     C.programs.forEach(k => { filter[k] = true; }); filter.none = true; filter.eudr = false;
     try { Object.assign(filter, JSON.parse(localStorage.getItem(LAYER_KEY) || '{}')); } catch (e) {}
-    setEudr(!!filter.eudr);
+    filter.eudr = false;   // bản đồ EUDR nặng: chỉ tải khi người dùng bật
   }
   const counts = { none: 0 };
   DATA.lo.rows.forEach(p => {
@@ -535,10 +546,10 @@ function renderLayers() {
     if (!visible(p) && p.id !== sel) return;
     let layer = null;
     if (p.geometry) {
-      try { layer = L.geoJSON(p.geometry, { style: styleFor(p) }).getLayers()[0]; } catch (e) { layer = null; }
+      try { layer = L.geoJSON(p.geometry, { style: styleFor(p), renderer: plotCanvas }).getLayers()[0]; } catch (e) { layer = null; }
     } else {
       const ll = pointOf(p);
-      if (ll) layer = L.circleMarker(ll, { radius: 6, color: '#fff', weight: 2, fillColor: colorOf(p), fillOpacity: 1 });
+      if (ll) layer = L.circleMarker(ll, { radius: 6, color: '#fff', weight: 2, fillColor: colorOf(p), fillOpacity: 1, renderer: plotCanvas });
     }
     if (!layer) return;
     layer.on('click', () => { if (!NEW && !map.pm.globalDrawModeEnabled()) select(p.id); });
@@ -1005,18 +1016,20 @@ function startGeomEdit() {
     layer.pm.enable({ allowSelfIntersection: false, snappable: true });
     layer.on('pm:edit pm:change', onGeomChange);
     geomEdit = { layer, isNew: false };
-    hint.textContent = 'Kéo các đỉnh để sửa. Kéo chấm mờ giữa cạnh để thêm đỉnh. Nhấn chuột phải (điện thoại: nhấn giữ) vào đỉnh để xóa đỉnh.';
+    gtAttach(layer, onGeomChange);
+    hint.textContent = 'Kéo các đỉnh để sửa. Kéo chấm mờ giữa cạnh để thêm đỉnh. Nhấn 2 lần liên tiếp vào một đỉnh để xóa đỉnh đó. Nút ↶ Quay lại ở phía trên để hoàn tác.';
   } else {
     geomEdit = { layer: null, isNew: true };
-    map.pm.enableDraw('Polygon', { allowSelfIntersection: false, snappable: true });
+    gtStartDraw();
     map.once('pm:create', e => {
       geomEdit.layer = e.layer;
       e.layer.setStyle({ color: SEL_COLOR, weight: 3, fillOpacity: 0.2 });
       e.layer.pm.enable({ allowSelfIntersection: false, snappable: true });
       e.layer.on('pm:edit pm:change', onGeomChange);
+      gtAttach(e.layer, onGeomChange);
       onGeomChange();
     });
-    hint.textContent = 'Chạm lần lượt vào các góc lô trên ảnh vệ tinh. Chạm lại điểm đầu tiên để khép kín, sau đó có thể kéo đỉnh để chỉnh.';
+    hint.textContent = 'Chạm lần lượt vào các góc lô trên ảnh vệ tinh. Chạm lại điểm đầu tiên để khép kín, sau đó có thể kéo đỉnh để chỉnh. Nhấn 2 lần liên tiếp vào một đỉnh để xóa; nút ↶ Quay lại để hoàn tác.';
   }
   hint.hidden = false;
   $('#gEdit').disabled = true;
@@ -1038,6 +1051,7 @@ function removeGeom() {
 
 function stopGeomTools() {
   stopNew();
+  gtStop();
   map.pm.disableDraw();
   map.off('pm:create');
   if (geomEdit && geomEdit.layer) {
@@ -1270,8 +1284,19 @@ async function doImport() {
   }
 }
 
+// Tải thư viện khi cần (không tải lúc mở trang)
+function loadScript_(src, globalName) {
+  if (window[globalName]) return Promise.resolve();
+  return new Promise((ok, fail) => {
+    const sc = document.createElement('script');
+    sc.src = src; sc.onload = ok; sc.onerror = () => fail(new Error('Không tải được thư viện ' + globalName));
+    document.head.appendChild(sc);
+  });
+}
+
 async function readKmlFile(f) {
   if (/\.kmz$/i.test(f.name)) {
+    await loadScript_('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', 'JSZip');
     const zip = await JSZip.loadAsync(f);
     const files = Object.values(zip.files).filter(z => !z.dir && /\.kml$/i.test(z.name));
     const kml = files.find(z => /(^|\/)doc\.kml$/i.test(z.name)) || files[0];
@@ -1338,7 +1363,7 @@ function gpsError(e) {
     : e.code === 3 ? 'Không lấy được vị trí (hết thời gian chờ). Hãy ra chỗ thoáng và thử lại.'
     : 'Không lấy được vị trí: ' + (e.message || 'lỗi không xác định');
   toast(msg, 10000);
-  if (e.code === 1) gpsStop();
+  if (e.code === 1) { gpsStop(); gpsRemember(false); }
 }
 function plotAt(lat, lng) {
   for (const p of DATA.lo.rows) {
@@ -1380,12 +1405,15 @@ function gpsOnFix(pos) {
   if (GPS.first) { GPS.first = false; panToVisible(ll, Math.max(map.getZoom(), 17)); }
   else if (GPS.follow) panToVisible(ll);
 }
-function gpsStart() {
+const GPS_KEY = 'lv_gps';
+function gpsRemember(v) { try { localStorage.setItem(GPS_KEY, v ? '1' : '0'); } catch (e) {} }
+function gpsStart(quiet) {
   if (!gpsSupported()) return;
-  GPS.first = true; GPS.follow = true;
+  GPS.first = !quiet; GPS.follow = !quiet;
+  gpsRemember(true);
   GPS.watch = navigator.geolocation.watchPosition(gpsOnFix, gpsError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 30000 });
   gpsStyle();
-  toast('Đang lấy vị trí…', 2500);
+  if (!quiet) toast('Đang lấy vị trí…', 2500);
 }
 function gpsStop() {
   if (GPS.watch != null) navigator.geolocation.clearWatch(GPS.watch);
@@ -1411,12 +1439,19 @@ const LocateCtl = L.Control.extend({
       L.DomEvent.preventDefault(e);
       if (GPS.watch == null) gpsStart();
       else if (!GPS.follow) { GPS.follow = true; gpsStyle(); if (GPS.fix) panToVisible(L.latLng(GPS.fix.coords.latitude, GPS.fix.coords.longitude), Math.max(map.getZoom(), 17)); }
-      else gpsStop();
+      else { gpsStop(); gpsRemember(false); }
     });
     return div;
   }
 });
 GPS.ctrl = new LocateCtl().addTo(map);
+// Lần sau mở trang: nếu đã bật vị trí và trình duyệt đã cho phép thì tự hiện vị trí, không hỏi lại
+(async () => {
+  let want = false;
+  try { want = localStorage.getItem(GPS_KEY) === '1'; } catch (e) {}
+  if (!want || !navigator.geolocation || !navigator.permissions) return;
+  try { if ((await navigator.permissions.query({ name: 'geolocation' })).state === 'granted') gpsStart(true); } catch (e) {}
+})();
 map.on('dragstart', () => { if (GPS.follow) { GPS.follow = false; gpsStyle(); } });
 $('#gps').addEventListener('click', () => { if (GPS.inPlot) select(GPS.inPlot.id); });
 
@@ -1577,6 +1612,97 @@ async function openPhoto(id, i) {
 }
 
 // ---------- Tạo lô mới: điểm hoặc polygon (nút + dưới nút vị trí) ----------
+// ---------- Thanh công cụ khi vẽ / sửa polygon: diện tích + Quay lại + nhấn 2 lần xóa đỉnh ----------
+const DRAW_OPTS = { allowSelfIntersection: false, snappable: true };
+const GT = { on: false, layer: null, draw: null, hist: [], onChange: null, lastTap: null, provMarker: null, merge: false };
+const llCopy = v => Array.isArray(v) ? v.map(llCopy) : L.latLng(v.lat, v.lng);
+const llKey = v => JSON.stringify(v, (k, x) => x && x.lat != null ? [+x.lat.toFixed(8), +x.lng.toFixed(8)] : x);
+
+function gtShow(on) {
+  GT.on = on;
+  $('#geoBar').hidden = !on;
+  $('#mapWrap').classList.toggle('editing', on);
+  if (on) map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
+}
+function gtArea() {
+  if (!GT.on) return;
+  let a = null;
+  try {
+    if (GT.layer) a = areaHa(GT.layer.toGeoJSON().geometry);
+    else if (GT.draw) {
+      const pts = GT.draw.getLatLngs().map(q => [q.lng, q.lat]);
+      if (pts.length >= 3) a = areaHa({ type: 'Polygon', coordinates: [pts.concat([pts[0]])] });
+    }
+  } catch (e) { a = null; }
+  $('#geoArea').textContent = a != null ? fmtHa(a) : (GT.draw ? 'chạm thêm góc lô…' : '—');
+  $('#geoUndo').disabled = GT.layer ? GT.hist.length < 2 : !(GT.draw && GT.draw.getLatLngs().length);
+}
+function gtStartDraw() {
+  gtStop();
+  gtShow(true);
+  map.pm.enableDraw('Polygon', DRAW_OPTS);
+  gtArea();
+}
+map.on('pm:drawstart', e => {
+  if (!GT.on || GT.layer) return;
+  GT.draw = e.workingLayer;
+  GT.draw.on('pm:vertexadded pm:vertexremoved', () => setTimeout(gtArea, 0));
+  gtArea();
+});
+const GT_EVENTS = {
+  'pm:edit': () => {
+    const cur = llCopy(GT.layer.getLatLngs());
+    if (GT.merge) { GT.merge = false; GT.hist[GT.hist.length - 1] = cur; }    // kéo đỉnh mới thêm: gộp thành 1 bước
+    else if (llKey(cur) !== llKey(GT.hist[GT.hist.length - 1])) GT.hist.push(cur);
+    if (GT.hist.length > 100) GT.hist.shift();
+    gtArea();
+  },
+  'pm:vertexadded': e => { GT.provMarker = e.marker; },
+  'pm:markerdragend': e => { if (GT.provMarker && e.markerEvent && e.markerEvent.target === GT.provMarker) GT.merge = true; GT.provMarker = null; },
+  'pm:change': () => setTimeout(gtArea, 0),
+  'pm:vertexclick': e => {
+    const m = e.markerEvent && e.markerEvent.target, now = Date.now();
+    if (m && GT.lastTap && GT.lastTap.m === m && now - GT.lastTap.t < 500) {
+      GT.lastTap = null;
+      const n = GT.layer.getLatLngs().flat(3).length;
+      if (n <= 3) { toast('Polygon cần ít nhất 3 đỉnh.'); return; }
+      try { GT.layer.pm._removeMarker({ target: m }); } catch (err) { toast('Không xóa được đỉnh này.'); }
+    } else GT.lastTap = { m, t: now };
+  }
+};
+function gtAttach(layer, onChange) {
+  if (GT.layer) GT.layer.off(GT_EVENTS);
+  gtShow(true);
+  GT.draw = null; GT.layer = layer; GT.onChange = onChange; GT.lastTap = null; GT.merge = false;
+  GT.hist = [llCopy(layer.getLatLngs())];
+  layer.on(GT_EVENTS);
+  gtArea();
+}
+function gtUndo() {
+  if (GT.layer) {
+    if (GT.hist.length < 2) return;
+    GT.hist.pop();
+    const l = GT.layer;
+    l.pm.disable();
+    l.setLatLngs(llCopy(GT.hist[GT.hist.length - 1]));
+    l.pm.enable(DRAW_OPTS);
+    if (GT.onChange) GT.onChange();
+    gtArea();
+  } else if (GT.draw) {
+    const d = map.pm.Draw.Polygon;
+    if ((d._markers || []).length > 1) d._removeLastVertex();
+    else { map.pm.disableDraw(); map.pm.enableDraw('Polygon', DRAW_OPTS); }
+    setTimeout(gtArea, 0);
+  }
+}
+function gtStop() {
+  if (GT.layer) GT.layer.off(GT_EVENTS);
+  Object.assign(GT, { layer: null, draw: null, hist: [], onChange: null, lastTap: null, provMarker: null, merge: false });
+  gtShow(false);
+}
+$('#geoUndo').addEventListener('click', gtUndo);
+L.DomEvent.disableClickPropagation($('#geoBar'));
+
 let NEW = null;   // { mode: 'point' | 'poly', picking, layer, latlng, acc }
 
 const AddCtl = L.Control.extend({
@@ -1634,15 +1760,16 @@ function startNew(how) {
     newPanel('Chạm vào vị trí trên bản đồ để đặt điểm.');
     setSheet('peek');
   } else {
-    newPanel('Chạm lần lượt vào các góc lô trên ảnh vệ tinh. Chạm lại điểm đầu tiên để khép kín, sau đó có thể kéo đỉnh để chỉnh.');
+    newPanel('Chạm lần lượt vào các góc lô trên ảnh vệ tinh. Chạm lại điểm đầu tiên để khép kín, sau đó có thể kéo đỉnh để chỉnh. Nhấn 2 lần liên tiếp vào một đỉnh để xóa; nút ↶ Quay lại để hoàn tác.');
     setSheet('peek');
-    map.pm.enableDraw('Polygon', { allowSelfIntersection: false, snappable: true });
+    gtStartDraw();
     map.once('pm:create', e => {
       if (!NEW) { map.removeLayer(e.layer); return; }
       NEW.layer = e.layer;
       e.layer.setStyle({ color: IMP_COLOR, weight: 3, fillOpacity: 0.2 });
       e.layer.pm.enable({ allowSelfIntersection: false, snappable: true });
       e.layer.on('pm:edit pm:change', updateNewInfo);
+      gtAttach(e.layer, updateNewInfo);
       showNewForm();
       setSheet('half');
     });
@@ -1668,6 +1795,7 @@ function stopNew() {
   if (!NEW) return;
   const n = NEW;
   NEW = null;
+  gtStop();
   map.pm.disableDraw();
   map.off('pm:create');
   if (n.layer) { if (n.layer.pm) n.layer.pm.disable(); map.removeLayer(n.layer); }
