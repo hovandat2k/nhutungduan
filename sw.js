@@ -1,6 +1,6 @@
 // Service worker: cho phép cài như ứng dụng và mở nhanh khi mạng yếu.
 // Chỉ lưu đệm phần giao diện; dữ liệu nông hộ KHÔNG được lưu đệm.
-const CACHE = 'lovuon-v7';
+const CACHE = 'lovuon-v8';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {

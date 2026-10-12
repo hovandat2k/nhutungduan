@@ -235,6 +235,9 @@
   .ph-view img { max-width: 100%; max-height: 58vh; border-radius: 8px; background: var(--soft); }
   /* Nút + và tạo lô mới */
   .addctl a { font-size: 26px; font-weight: 600; line-height: 28px !important; }
+  .northctl a { display: flex !important; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
+  .northctl svg { width: 22px; height: 22px; transition: transform .15s; }
+  .northctl.off { display: none; }
   .addmenu { display: grid; gap: 8px; padding: 12px 0 4px; }
   .addmenu button { display: grid; grid-template-columns: 32px 1fr; align-items: center; gap: 2px 8px; text-align: left;
     white-space: normal; padding: 12px 14px; font-size: 15px; }
@@ -289,6 +292,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.js"></script>
 <script>
 const FOCUS_ID = new URLSearchParams(location.search).get('lo') || '';
@@ -313,7 +317,9 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g,
 
 // ---------- Bản đồ ----------
 const MAX_ZOOM = 21;   // phóng sâu hơn mức ảnh gốc: phóng to ảnh rõ nhất hiện có (để chỉnh đỉnh chính xác)
-const map = L.map('map', { zoomControl: true, maxZoom: MAX_ZOOM }).setView([11.9, 108.3], 9);
+// Xoay bản đồ (leaflet-rotate): điện thoại xoay bằng 2 ngón; máy tính giữ Shift + lăn chuột, hoặc kéo nút la bàn
+const map = L.map('map', { zoomControl: true, maxZoom: MAX_ZOOM, rotate: true, bearing: 0,
+  touchRotate: true, shiftKeyRotate: true, rotateControl: false }).setView([11.9, 108.3], 9);
 const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/';
 const sat = L.tileLayer(ESRI + 'tile/{z}/{y}/{x}',
   { maxZoom: MAX_ZOOM, maxNativeZoom: 18, attribution: 'Ảnh vệ tinh © Esri' }).addTo(map);
@@ -352,6 +358,45 @@ async function satFitNative() {
   }
 }
 map.on('moveend', satFitNative);
+
+// Nút la bàn: kim chỉ hướng Bắc; bấm để quay về hướng Bắc; kéo ngang để xoay (tiện trên máy tính)
+const NorthCtl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd() {
+    const div = L.DomUtil.create('div', 'leaflet-bar leaflet-control northctl');
+    const a = L.DomUtil.create('a', '', div);
+    a.href = '#'; a.setAttribute('role', 'button');
+    a.title = 'Xoay bản đồ: kéo ngang nút này (hoặc Shift + lăn chuột, điện thoại: xoay 2 ngón). Bấm để quay về hướng Bắc.';
+    a.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 2l5 10h-10z" fill="#e11d48"/><path d="M12 22l-5-10h10z" fill="#94a3b8"/></svg>';
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.on(a, 'click', e => L.DomEvent.preventDefault(e));
+    let drag = null;
+    a.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      drag = { x: e.clientX, b: map.getBearing(), moved: false };
+      a.setPointerCapture(e.pointerId);
+    });
+    a.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      if (Math.abs(dx) > 4) drag.moved = true;
+      if (drag.moved) map.setBearing(drag.b + dx * 0.6);
+    });
+    a.addEventListener('pointerup', () => {
+      if (drag && !drag.moved) map.setBearing(0);
+      drag = null;
+    });
+    this._svg = a.firstChild;
+    return div;
+  }
+});
+const northCtl = new NorthCtl().addTo(map);
+function northStyle() {
+  const b = map.getBearing() || 0;
+  northCtl._svg.style.transform = 'rotate(' + b + 'deg)';
+}
+map.on('rotate', northStyle);
+northStyle();
 L.control.layers({ 'Vệ tinh': sat, 'Bản đồ đường': osm }, { 'Nhãn địa danh': labels }).addTo(map);
 L.control.scale({ imperial: false }).addTo(map);
 // Lớp kiểm tra EUDR: rừng năm 2020 (EC JRC GFC2020) + mất rừng sau 31/12/2020 (UMD/Global Forest Watch)
