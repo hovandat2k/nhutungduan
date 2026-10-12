@@ -1514,21 +1514,20 @@ function headFromEvent(e) {
   if (!HEAD.raf) HEAD.raf = requestAnimationFrame(() => { HEAD.raf = 0; headDraw(); });
 }
 function headStart() {
-  if (HEAD.listening || typeof DeviceOrientationEvent === 'undefined') return;
-  const listen = () => {
-    if (HEAD.listening) return;
+  if (typeof DeviceOrientationEvent === 'undefined') return;
+  const needAsk = typeof DeviceOrientationEvent.requestPermission === 'function';
+  if (HEAD.listening && (HEAD.granted || !needAsk)) return;
+  if (!HEAD.listening) {
     HEAD.evt = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
-    window.addEventListener(HEAD.evt, headFromEvent);
+    window.addEventListener(HEAD.evt, headFromEvent);   // máy không cần xin quyền thì có dữ liệu ngay
     HEAD.listening = true;
-  };
-  // iPhone cần xin quyền (chỉ được khi người dùng vừa bấm nút)
-  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-    DeviceOrientationEvent.requestPermission().then(st => { if (st === 'granted') listen(); }).catch(() => {});
-  } else listen();
+  }
+  // iPhone (và Chrome mới) cần xin quyền, chỉ được khi người dùng vừa bấm nút; chưa được thì lần bấm ◎ sau xin lại
+  if (needAsk) DeviceOrientationEvent.requestPermission().then(st => { HEAD.granted = st === 'granted'; }).catch(() => {});
 }
 function headStop() {
   if (HEAD.listening) window.removeEventListener(HEAD.evt, headFromEvent);
-  HEAD.listening = false; HEAD.deg = null;
+  HEAD.listening = false; HEAD.deg = null; HEAD.granted = false;
   if (HEAD.marker) { map.removeLayer(HEAD.marker); HEAD.marker = null; }
 }
 function headDraw() {
