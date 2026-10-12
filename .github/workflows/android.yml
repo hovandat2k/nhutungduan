@@ -84,7 +84,7 @@ jobs:
           set -o pipefail
           if ! bubblewrap build --skipPwaValidation 2>&1 | tee build.log; then
             # đưa phần cuối nhật ký lên thành chú thích lỗi để đọc được từ API
-            msg=$(tail -n 60 build.log | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+            msg=$( { grep -n -A12 'What went wrong' build.log; grep -n -E 'error:|Error:|ERROR|Caused by|FAILED|Exception:' build.log | grep -v '^\s*at ' | head -40; } | head -90 | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
             echo "::error title=bubblewrap build::$msg"
             exit 1
           fi
