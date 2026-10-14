@@ -625,8 +625,23 @@ function visible(p) {
 function tagsHtml(p) {
   return progsOf(p).map(k => `<span class="tag" style="background:${PROG_COLOR[k] || NONE_COLOR}">${esc(k)}</span>`).join('');
 }
+// Chỉ tên chủ hộ, không kèm địa chỉ. Một số tên nhập từ BPM có dính địa chỉ không dấu ở cuối
+// (vd "Nguyễn Văn Ý Xuan Truong Da Lat") → bỏ các từ cuối trùng với xã/thôn/tỉnh của hộ.
+const ADDR_RE = /thon|xa|huyen|tinh|diachi|dia_chi|ap|phuong|quan/i;
+const foldVN = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[đĐ]/g, 'd').toLowerCase();
 function farmName(f) {
-  return f ? C.listCols.map(k => f.props[k]).filter(v => v !== '' && v != null).join(' ') : '';
+  if (!f) return '';
+  const cols = C.listCols || [];
+  const nameKey = cols.find(k => /ten|hoten|name/i.test(k) && !ADDR_RE.test(k)) || cols[0];
+  let name = String(f.props[nameKey] ?? '').trim();
+  if (!name) return '';
+  const addr = new Set(Object.keys(f.props).filter(k => k !== nameKey && ADDR_RE.test(k))
+    .flatMap(k => foldVN(f.props[k] ?? '').split(/[^a-z0-9]+/)).filter(Boolean));
+  ['xuan truong', 'da lat', 'lam dong', 'son la'].forEach(x => x.split(' ').forEach(w => addr.add(w)));
+  const words = name.split(/\s+/);
+  let cut = words.length;              // chỉ bỏ khi cuối tên có ≥2 từ không dấu liên tiếp là địa danh (vd "Da Lat")
+  while (cut > 2 && /^[A-Za-z0-9.,-]+$/.test(words[cut - 1]) && addr.has(foldVN(words[cut - 1]).replace(/[^a-z0-9]/g, ''))) cut--;
+  return (words.length - cut >= 2 ? words.slice(0, cut) : words).join(' ').replace(/[\s,;\-–]+$/, '');
 }
 
 const LAYER_KEY = 'lv_layers';
