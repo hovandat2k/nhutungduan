@@ -1734,14 +1734,20 @@ const IN_APP = (() => {
 async function gpsPermState() {
   try { return (await navigator.permissions.query({ name: 'geolocation' })).state; } catch (e) { return 'unknown'; }
 }
+let gpsDenials = 0;                 // số lần bị từ chối liên tiếp trong lần mở app này
 function gpsHowTo() {
-  return IN_APP
-    ? `<ol class="steps"><li>Thoát ra màn hình chính, <b>nhấn giữ biểu tượng "Dự án NT"</b> → chọn <b>ⓘ Thông tin ứng dụng</b>.</li>
-       <li>Chọn <b>Quyền</b> → <b>Vị trí</b> → <b>Cho phép khi dùng ứng dụng</b> (bật thêm <b>Dùng vị trí chính xác</b> nếu có).</li>
-       <li>Quay lại app và bấm <b>Thử lại</b>.</li></ol>`
-    : `<ol class="steps"><li>Bấm biểu tượng <b>ổ khóa / ⚙</b> bên trái thanh địa chỉ.</li>
+  if (!IN_APP) return `<ol class="steps"><li>Bấm biểu tượng <b>ổ khóa / ⚙</b> bên trái thanh địa chỉ.</li>
        <li>Chọn <b>Quyền</b> (hoặc <b>Cài đặt trang web</b>) → <b>Vị trí</b> → <b>Cho phép</b>.</li>
        <li>Tải lại trang rồi bấm <b>Thử lại</b>.</li></ol>`;
+  const restart = `<li><b>Đóng hẳn app</b>: bấm nút đa nhiệm (■) → vuốt bỏ "Dự án NT", rồi mở lại app từ biểu tượng.
+       Quyền mới chỉ có tác dụng sau khi mở lại.</li>`;
+  return gpsDenials < 2
+    ? `<ol class="steps"><li>Nhấn giữ biểu tượng <b>"Dự án NT"</b> → <b>ⓘ Thông tin ứng dụng</b> → <b>Quyền</b> → <b>Vị trí</b> →
+         <b>Chỉ cho phép khi dùng ứng dụng</b>, bật <b>Sử dụng vị trí chính xác</b>.</li>${restart}</ol>`
+    : `<p><b>Nếu đã cho phép và mở lại app mà vẫn không được</b>, kiểm tra thêm 2 chỗ (app chạy bên trong Chrome):</p>
+       <ol class="steps"><li>Nhấn giữ biểu tượng <b>"Dự án NT"</b> → chọn <b>Cài đặt trang web</b> (Site settings) → <b>Vị trí</b> → <b>Cho phép</b>.</li>
+       <li><b>Cài đặt</b> điện thoại → <b>Ứng dụng</b> → <b>Chrome</b> → <b>Quyền</b> → <b>Vị trí</b> → <b>Chỉ cho phép khi dùng ứng dụng</b>.</li>
+       ${restart}</ol>`;
 }
 let gpsRetry = null;               // việc cần làm lại sau khi được cấp quyền
 function gpsDialog(kind) {
@@ -1752,8 +1758,9 @@ function gpsDialog(kind) {
     : kind === 'off'
     ? `<p>Điện thoại đang tắt định vị. Kéo thanh thông báo từ trên xuống và bật <b>Vị trí</b>, rồi bấm <b>Thử lại</b>.</p>
        <p class="muted">Ở trong nhà hoặc dưới tán cây dày GPS có thể lâu có tín hiệu — ra chỗ thoáng sẽ nhanh hơn.</p>`
-    : `<p>Quyền vị trí đang bị chặn nên điện thoại không hỏi lại được. Bật lại như sau:</p>${gpsHowTo()}
+    : `<p>${gpsDenials < 2 ? 'Quyền vị trí đang bị chặn nên app không tự hỏi lại được. Bật lại như sau:' : 'Vẫn chưa lấy được quyền vị trí.'}</p>${gpsHowTo()}
        <p class="muted">Nhớ bật cả <b>Vị trí (GPS)</b> trên thanh thông báo.</p>`;
+  $('#toast').style.display = 'none';
   openModal(title, `<div class="gpsdlg">${body}<div class="gpsdlg-b">
       <button type="button" class="primary" id="gpsGo">${kind === 'ask' ? 'Cho phép' : 'Thử lại'}</button>
       <button type="button" id="gpsLater">Để sau</button></div></div>`, false);
@@ -1773,7 +1780,7 @@ async function gpsEnsure(go) {
 }
 function gpsError(e, retry) {
   if (e.code === 1 || e.code === 2) {
-    if (e.code === 1) { gpsStop(); gpsRemember(false); }
+    if (e.code === 1) { gpsStop(); gpsRemember(false); gpsDenials++; }
     else if (!retry) { if (GPS.warned) return; GPS.warned = true; }   // theo dõi liên tục: chỉ báo một lần
     gpsRetry = retry || (() => gpsStart());
     gpsDialog(e.code === 1 ? 'denied' : 'off');
