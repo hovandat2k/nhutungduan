@@ -103,7 +103,9 @@
     #q { flex: 1 1 auto; height: 42px; font-size: 16px; border-radius: 21px; padding: 0 16px;
       box-shadow: 0 2px 8px rgba(0,0,0,.25); }
     #btnMenu { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px;
-      border-radius: 21px; padding: 0; font-size: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.25); background: var(--bg); }
+      border-radius: 21px; padding: 0; font-size: 20px; box-shadow: 0 2px 8px rgba(0,0,0,.25); background: var(--bg);
+      flex: none; color: var(--fg, #1d2329); }
+    #btnMenu svg { display: block; }
     #bar #chips, #bar .tool { display: none; }
     #bar.open { background: var(--bg); box-shadow: 0 2px 10px rgba(0,0,0,.25); }
     #bar.open #chips { display: flex; flex-wrap: wrap; width: 100%; order: 3; padding-bottom: 2px; }
@@ -265,7 +267,7 @@
 <div id="app">
   <div id="bar">
     <input id="q" type="search" placeholder="Tìm tên chủ hộ hoặc mã vườn…">
-    <button id="btnMenu" title="Bộ lọc và công cụ">☰</button>
+    <button id="btnMenu" title="Bộ lọc và công cụ" aria-label="Menu"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg></button>
     <div id="chips"></div>
     <div id="busy"></div>
     <button id="btnImport" class="tool" title="Nhập ranh giới từ file KML/KMZ">⬆ <span class="btxt">Nhập KML</span></button>
