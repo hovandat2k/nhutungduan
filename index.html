@@ -1067,9 +1067,13 @@ function runChecks(p, f) {
   const fmt = n => (Math.round(n * 1000) / 1000).toLocaleString('vi-VN');
   const missing = [];
   const L1 = layout();
+  // Hộ chỉ tham gia 4C: chỉ kiểm tra các ô có trong file BPM (không đòi các ô riêng của GMR)
+  const prs = progsOf(p), only4C = prs.length > 0 && !prs.includes('RA');
+  const bpmKeys = new Set((C.fields && C.fields.layout && C.fields.layout.bpm) || BPM_KEYS_DEFAULT);
   [].concat(L1.main, ...L1.more.map(g => g.items)).forEach(({ kind, m }) => {
     const obj = kind === 'lo' ? p : kind === 'ho' ? f : null;
     if (!obj || !m.col || m.ro || m.auto) return;
+    if (only4C && !bpmKeys.has(kind + ':' + m.col)) return;
     const e = fieldError(m, curVal(kind, obj, m.col));
     if (e) missing.push(m.label + ': ' + e.toLowerCase());
   });
@@ -1101,13 +1105,77 @@ function runChecks(p, f) {
   if (lat != null && lon != null && !isNaN(lat) && !isNaN(lon)) {
     if (lat < 8 || lat > 24 || lon < 102 || lon > 110) out.push(['err', 'Vĩ độ/kinh độ nằm ngoài lãnh thổ Việt Nam – có thể bị nhập ngược']);
     else if (g && g.type === 'Polygon' && !pipRing(lon, lat, g.coordinates[0])) out.push(['warn', 'Điểm vĩ độ/kinh độ nằm ngoài ranh giới lô']);
+  } else if (only4C) {
+    out.push(['err', 'BPM bắt buộc có vĩ độ/kinh độ cho mỗi lô']);
   } else if (f) {
     const plots = DATA.lo.rows.filter(x => String(x.props[C.farm]).trim() === f.id);
     const largest = plots.slice().sort((x, y) => (numOf(y.props.DienTich_ha) || 0) - (numOf(x.props.DienTich_ha) || 0))[0];
     if (largest && largest.id === p.id) out.push(['err', 'GMR bắt buộc có vĩ độ/kinh độ cho lô lớn nhất của hộ']);
   }
-  if (!out.some(o => o[0] === 'err' || o[0] === 'warn')) out.unshift(['ok', 'Dữ liệu GMR của lô và hộ này hợp lệ']);
+  overlapChecks(p, g).forEach(o => out.push(o));
+  if (!out.some(o => o[0] === 'err' || o[0] === 'warn')) out.unshift(['ok', `Dữ liệu ${only4C ? 'BPM' : 'GMR'} của lô và hộ này hợp lệ`]);
   return out;
+}
+
+// ---------- Chồng lấn: polygon với polygon, vùng bán kính của điểm (theo diện tích) với điểm/polygon khác ----------
+const M_LAT = 110574;
+const mLon = lat => 111320 * Math.cos(lat * Math.PI / 180);
+function inGeom(x, y, g) {
+  const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+  return polys.some(rs => pipRing(x, y, rs[0]) && !rs.slice(1).some(h => pipRing(x, y, h)));
+}
+function geomBB(g) {
+  const ring = g.type === 'Polygon' ? g.coordinates[0] : g.coordinates.flatMap(pp => pp[0]);
+  return ring.reduce((b, c) => [Math.min(b[0], c[0]), Math.min(b[1], c[1]), Math.max(b[2], c[0]), Math.max(b[3], c[1])], [999, 999, -999, -999]);
+}
+/** Hình của một lô để so chồng lấn: polygon, hoặc hình tròn quanh điểm có diện tích = diện tích khai báo. */
+function shapeOf(g, pt, areaHaVal) {
+  if (g) return { kind: 'poly', bb: geomBB(g), inside: (x, y) => inGeom(x, y, g) };
+  if (!pt || !(areaHaVal > 0)) return null;
+  const [lat, lng] = pt, r = Math.sqrt(areaHaVal * 10000 / Math.PI), dx = r / mLon(lat), dy = r / M_LAT;
+  return { kind: 'pt', r, bb: [lng - dx, lat - dy, lng + dx, lat + dy],
+    inside: (x, y) => { const a = (x - lng) * mLon(lat), b = (y - lat) * M_LAT; return a * a + b * b <= r * r; } };
+}
+const SHAPES = new WeakMap();
+function plotShape(q) {
+  const key = q.geometry || q.props;
+  let s = SHAPES.get(key);
+  if (s === undefined) { s = shapeOf(q.geometry, pointOf(q), numOf(q.props.DienTich_ha)); SHAPES.set(key, s); }
+  return s;
+}
+/** Diện tích chồng lấn (m²) ước tính bằng lưới 24×24 điểm trong phần giao của hai khung bao. */
+function overlapM2(a, b) {
+  const x0 = Math.max(a.bb[0], b.bb[0]), y0 = Math.max(a.bb[1], b.bb[1]), x1 = Math.min(a.bb[2], b.bb[2]), y1 = Math.min(a.bb[3], b.bb[3]);
+  if (x0 >= x1 || y0 >= y1) return 0;
+  const N = 24, dx = (x1 - x0) / N, dy = (y1 - y0) / N;
+  let n = 0;
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+    const x = x0 + (i + 0.5) * dx, y = y0 + (j + 0.5) * dy;
+    if (a.inside(x, y) && b.inside(x, y)) n++;
+  }
+  return n * dx * mLon((y0 + y1) / 2) * dy * M_LAT;
+}
+function overlapChecks(p, g) {
+  let pt = null;
+  const lat = numOf(curVal('lo', p, C.lat)), lon = numOf(curVal('lo', p, C.lon));
+  if (!g && lat != null && lon != null && isFinite(lat) && isFinite(lon)) pt = [lat, lon];
+  const me = shapeOf(g, pt, numOf(curVal('lo', p, 'DienTich_ha')));
+  if (!me) return [];
+  const hits = [];
+  DATA.lo.rows.forEach(q => {
+    if (q.id === p.id) return;
+    const o = plotShape(q);
+    if (!o || o.bb[0] > me.bb[2] || o.bb[2] < me.bb[0] || o.bb[1] > me.bb[3] || o.bb[3] < me.bb[1]) return;
+    const m2 = overlapM2(me, o);
+    if (m2 >= 10) hits.push([q.id, m2, o.kind]);
+  });
+  if (!hits.length) return [];
+  hits.sort((x, y) => y[1] - x[1]);
+  const list = hits.slice(0, 5).map(([id, m2, k]) => `${id}${k === 'pt' ? ' (điểm)' : ''} ~${Math.round(m2).toLocaleString('vi-VN')} m²`).join(', ') +
+    (hits.length > 5 ? ` và ${hits.length - 5} lô khác` : '');
+  return [['warn', me.kind === 'poly'
+    ? `Polygon đang chồng lấn lên lô khác: ${list}`
+    : `Vùng bán kính của điểm (~${Math.round(me.r)} m, theo diện tích khai báo) chồng lên lô khác: ${list}`]];
 }
 
 function renderChecks() {
