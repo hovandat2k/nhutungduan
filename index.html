@@ -519,7 +519,7 @@ function areaHa(g) {
     : g.type === 'MultiPolygon' ? g.coordinates.reduce((s, p) => s + polyArea(p), 0) : 0;
   return m2 / 10000;
 }
-const fmtHa = x => x.toLocaleString('vi-VN', { maximumFractionDigits: 4 }) + ' ha';
+const fmtHa = x => x.toLocaleString('vi-VN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ha';
 
 // ---------- Gọi Apps Script ----------
 const API_URL = (window.APP_CONFIG || {}).API_URL || '';
@@ -927,7 +927,6 @@ function layout() {
   [['lo', DATA.lo.headers], ['ho', DATA.ho.headers]].forEach(([kind, hs]) => hs.forEach(col => {
     if (col && !used.has(kind + ':' + col) && !SKIP_COLS().has(col)) extra.push({ kind, m: metaOf(kind, col) });
   }));
-  if (extra.length) more.push({ group: 'Cột khác trong sheet', items: extra });
   return { main, more };
 }
 
@@ -973,6 +972,7 @@ function fieldHtml(kind, m, obj, ro, ctx) {
   const fid = 'f' + (++fidSeq);
   let v = obj ? obj.props[m.col] : '';
   if (v == null) v = '';
+  if (m.col === 'DienTichDo_ha' && v !== '' && isFinite(Number(v))) v = (Math.round(Number(v) * 100) / 100).toFixed(2);
   const lockRo = ro || m.ro || m.auto;
   const attrs = `id="${fid}" data-kind="${kind}" data-k="${esc(m.col)}" ${lockRo ? (m.type === 'select' ? 'disabled' : 'readonly') : ''}`;
   let input;
@@ -1089,11 +1089,6 @@ function runChecks(p, f) {
     const prev = numOf(curVal('ho', f, 'SanLuongNamTruoc_kg')), sold = numOf(curVal('ho', f, 'SanLuongBanNamTruoc_kg'));
     if (prev != null && sold != null && sold > prev) out.push(['warn', `Sản lượng bán năm trước (${fmt(sold)} kg) lớn hơn sản lượng năm trước (${fmt(prev)} kg)`]);
     const est = numOf(curVal('ho', f, 'SanLuongUoc_kg'));
-    if (cert && est != null) {
-      const y = est / cert, ly = prev != null ? prev / cert : null;
-      out.push(['info', `Năng suất ước tính ${fmt(y)} kg/ha` + (ly != null ? ` · năm trước ${fmt(ly)} kg/ha` : '') +
-        (prev ? ` · tăng trưởng ${fmt((est - prev) / prev * 100)}%` : '')]);
-    }
   }
   const decl = numOf(curVal('lo', p, 'DienTich_ha'));
   const g = geomEdit && geomEdit.layer ? currentGeom() : (geomRemoved ? null : p.geometry);
@@ -1138,18 +1133,22 @@ function showPlot(id, zoom) {
       Diện tích đo từ polygon: <b id="areaVal">${area != null ? fmtHa(area) : '—'}</b>
       · ${srcLabel(p)}: <b>${esc(p.props.DienTich_ha ?? '—')}</b> ha
     </div>`;
+  // Hộ tham gia 4C (kể cả hộ RA + 4C): hiện mã 4C của lô (hoặc của hộ nếu lô chưa có)
+  const pr4 = progsOf(p).filter(k => /^4C/.test(k));
+  const ma4c = String(p.props.MaLo4C || (f && f.props.Ma4C) || '').trim();
+  if (pr4.length && ma4c) h += `<div class="stats">Mã ${esc(pr4.join(', '))}: <b>${esc(ma4c)}</b></div>`;
   if (p.props.__geomError) h += `<p class="err">Ô Polygon của lô này chứa dữ liệu không đọc được. Vẽ lại hoặc nhập lại từ KML.</p>`;
   if (!p.geometry) h += `<p class="muted">Lô chưa có ranh giới${pointOf(p) ? ' (đang hiện điểm GPS)' : ' và chưa có điểm GPS'}.</p>`;
   if (canEdit) {
     h += `<div class="row">
-      <button id="gEdit">${p.geometry ? '✎ Sửa ranh giới' : '✎ Vẽ ranh giới'}</button>
-      ${p.geometry ? '<button id="gDel" class="danger">Xóa ranh giới</button>' : ''}
+      <button id="gEdit">${p.geometry ? '✎ Sửa Polygon' : '✎ Vẽ Polygon'}</button>
+      ${p.geometry ? '<button id="gDel" class="danger">Xóa Polygon</button>' : ''}
     </div><p class="hint" id="gHint" hidden></p>`;
   }
   h += `<div id="checks"></div>`;
 
   if (f) {
-    h += `<div class="muted">Chương trình tham gia (theo danh sách, không sửa trên bản đồ):</div><div class="progs">`;
+    h += `<div class="muted">Chương trình tham gia</div><div class="progs">`;
     C.programs.forEach(k => {
       h += `<label class="prog ro ${f.props[k] === true ? 'on' : ''}" style="border-left:5px solid ${PROG_COLOR[k] || NONE_COLOR}">
         <input type="checkbox" ${f.props[k] === true ? 'checked' : ''} disabled> ${esc(k)}</label>`;
@@ -1263,7 +1262,7 @@ function startGeomEdit() {
 }
 
 function removeGeom() {
-  if (!confirm('Xóa ranh giới của lô ' + sel + '? (Chỉ áp dụng khi bấm Lưu)')) return;
+  if (!confirm('Xóa polygon của lô ' + sel + '? (Chỉ áp dụng khi bấm Lưu)')) return;
   geomRemoved = true;
   const l = layerById[sel];
   if (l) plotGroup.removeLayer(l);
@@ -1789,8 +1788,7 @@ const UPLOADING = {};              // MaLo -> câu báo tiến độ
 
 function photosHtml(p) {
   const n = photoCount(p.id);
-  return `<div class="photos"><div class="ph-head"><b>Ảnh mảnh vườn</b>
-      <span class="muted" id="phCount">${n ? n + ' ảnh' : 'chưa có ảnh'}</span></div>
+  return `<div class="photos"><div class="ph-head"><span class="muted" id="phCount">${n ? n + ' ảnh' : ''}</span></div>
     <div class="ph-grid" id="phGrid">${n ? '<span class="muted">Đang tải ảnh…</span>' : ''}</div>
     <div class="muted" id="phProg">${esc(UPLOADING[p.id] || '')}</div>
     ${DATA.user.canEdit ? `<button type="button" class="ph-add" id="phAdd">📷 Thêm ảnh</button>
@@ -1820,7 +1818,7 @@ function renderPhotoGrid(id) {
   const g = $('#phGrid');
   if (!g || sel !== id) return;
   const list = PHOTOS[id] || [];
-  $('#phCount').textContent = list.length ? list.length + ' ảnh' : 'chưa có ảnh';
+  $('#phCount').textContent = list.length ? list.length + ' ảnh' : '';
   g.innerHTML = list.map((ph, i) =>
     `<button type="button" class="ph" data-i="${i}" title="${esc(ph.time)} · ${esc(ph.by)}">${ph.thumb ? `<img src="${esc(ph.thumb)}" alt="Ảnh ${i + 1}" loading="lazy">` : '🖼'}</button>`).join('');
   g.querySelectorAll('.ph').forEach(el => { el.onclick = () => openPhoto(id, Number(el.dataset.i)); });
