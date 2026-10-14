@@ -1,6 +1,7 @@
 // Service worker: cho phép cài như ứng dụng và mở nhanh khi mạng yếu.
-// Chỉ lưu đệm phần giao diện; dữ liệu nông hộ KHÔNG được lưu đệm.
-const CACHE = 'lovuon-v18';
+// Ở đây chỉ lưu đệm phần giao diện. Dữ liệu nông hộ do index.html lưu riêng trong IndexedDB
+// (theo từng tài khoản, xóa khi đăng xuất).
+const CACHE = 'lovuon-v19';
 const SHELL = ['./', 'index.html', 'config.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {

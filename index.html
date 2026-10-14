@@ -557,6 +557,67 @@ async function gunzip64(b64) {
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
 }
+
+// ---------- Lưu dữ liệu trên máy (IndexedDB) ----------
+// Mở app: hiện ngay dữ liệu đã lưu trên máy, rồi lấy bản mới từ máy chủ ở nền.
+// Mỗi tài khoản một bản riêng; đăng xuất hoặc hết phiên thì xóa hết.
+const CACHE_VER = 1;
+const cache = {
+  _db: null,
+  open() {
+    if (this._db) return this._db;
+    this._db = new Promise((res, rej) => {
+      if (!('indexedDB' in window)) return rej(new Error('no idb'));
+      const rq = indexedDB.open('lovuon', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => rej(rq.error);
+    }).catch(e => { this._db = null; throw e; });
+    return this._db;
+  },
+  async _tx(mode, fn) {
+    const db = await this.open();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('kv', mode), rq = fn(tx.objectStore('kv'));
+      tx.oncomplete = () => res(rq && rq.result);
+      tx.onerror = tx.onabort = () => rej(tx.error);
+    });
+  },
+  key: () => 'data:' + (store.get(EMAIL_KEY) || ''),
+  async get() {
+    try {
+      const rec = await this._tx('readonly', s => s.get(this.key()));
+      return rec && rec.v === CACHE_VER && rec.data ? rec : null;
+    } catch (e) { return null; }
+  },
+  async put(data, sig) {
+    try { await this._tx('readwrite', s => s.put({ v: CACHE_VER, t: Date.now(), sig, data }, this.key())); } catch (e) {}
+  },
+  async clear() {
+    try { await this._tx('readwrite', s => s.clear()); } catch (e) {}
+  }
+};
+// Dấu vân tay nhanh của dữ liệu: giống nhau thì khỏi vẽ lại bản đồ
+function hashStr(s) {
+  let h1 = 0x811c9dc5, h2 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619); h2 = (h2 * 31 + c) | 0;
+  }
+  return s.length + '-' + (h1 >>> 0).toString(36) + '-' + (h2 >>> 0).toString(36);
+}
+let dataSig = null;   // vân tay bản đang hiện; null = đã sửa tại máy, chưa khớp máy chủ
+let cacheTimer = null;
+// Lưu bản đang hiện (kể cả các thay đổi vừa lưu thành công) để lần mở sau thấy ngay
+function saveCacheSoon() {
+  clearTimeout(cacheTimer);
+  cacheTimer = setTimeout(() => {
+    if (!DATA || savesPending) return;
+    try { cache.put(JSON.parse(JSON.stringify(DATA)), dataSig); } catch (e) {}
+  }, 1500);
+}
+const fmtTime = t => new Date(t).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+
 async function api(action, payload) {
   if (!API_URL || /XXXX/.test(API_URL)) throw new Error('Chưa cấu hình địa chỉ cổng dữ liệu (config.js).');
   let r;
@@ -573,7 +634,7 @@ async function api(action, payload) {
     if (j.gz) j = { ok: true, data: JSON.parse(await gunzip64(j.gz)) };
   } catch (e) { throw new Error('Máy chủ trả về dữ liệu lạ (mã ' + r.status + ').'); }
   if (!j.ok) {
-    if (j.auth) { store.set(TOKEN_KEY, null); showLogin(j.error); }
+    if (j.auth) { store.set(TOKEN_KEY, null); cache.clear(); dataSig = null; showLogin(j.error); }
     const err = new Error(j.error || 'Lỗi không xác định');
     err.auth = !!j.auth;
     throw err;
@@ -598,6 +659,7 @@ $('#loginForm').addEventListener('submit', async e => {
     $('#lgPin').value = '';
     $('#login').hidden = true;
     firstLoad = true;
+    dataSig = null;
     load(false);
   } catch (err) {
     $('#lgErr').textContent = err.message;
@@ -608,6 +670,8 @@ $('#loginForm').addEventListener('submit', async e => {
 async function logout() {
   if (hasUnsaved() && !confirm('Bạn có thay đổi chưa lưu. Vẫn đăng xuất?')) return;
   try { await api('logout', {}); } catch (e) {}
+  clearTimeout(cacheTimer);
+  await cache.clear();
   store.set(TOKEN_KEY, null);
   location.reload();
 }
@@ -692,34 +756,65 @@ function renderChips() {
 }
 
 // ---------- Tải dữ liệu ----------
-async function load(keepView) {
+// Đưa một bộ dữ liệu (từ máy chủ hoặc từ bộ nhớ máy) lên bản đồ
+function applyData(d, keepView) {
+  DATA = d;
+  C = DATA.cfg;
+  // Đổi nhãn hiển thị trên bản đồ (không đổi tên cột trong Sheet)
+  Object.values(C.fields || {}).forEach(list => Array.isArray(list) && list.forEach(m => {
+    if (m && typeof m.label === 'string') m.label = m.label.replace(/Sản lượng ước\s+năm nay/i, 'Sản lượng ước tính năm nay');
+  }));
+  DATA.photos = DATA.photos || {};
+  Object.keys(PHOTOS).forEach(id => { if ((DATA.photos[id] || 0) !== PHOTOS[id].length) delete PHOTOS[id]; });
+  byId = {};
+  DATA.lo.rows.forEach(p => { byId[p.id] = p; });
+  $('#btnExport').hidden = !DATA.user.isAdmin;
+  if (GPS.fix) { GPS.inPlot = plotAt(GPS.fix.coords.latitude, GPS.fix.coords.longitude); gpsUpdateBadge(); }
+  renderChips();
+  renderLayers();
+  if (firstLoad) {
+    firstLoad = false;
+    if (FOCUS_ID && byId[FOCUS_ID]) { sel = FOCUS_ID; renderLayers(); showPlot(sel, true); return; }
+    fitAll();
+  } else if (!keepView) fitAll();
+  if (sel && byId[sel]) showPlot(sel, false); else { sel = null; showList(); }
+}
+
+// Lấy dữ liệu mới từ máy chủ. Trùng bản đang hiện thì không vẽ lại.
+// background: đang hiện bản lưu trên máy, nếu người dùng đang sửa thì chưa thay (lần tự làm mới sau sẽ thay).
+let cacheShownAt = 0;
+async function load(keepView, background) {
   busy(true);
   try {
-    DATA = await call('getData');
-    C = DATA.cfg;
-    // Đổi nhãn hiển thị trên bản đồ (không đổi tên cột trong Sheet)
-    Object.values(C.fields || {}).forEach(list => Array.isArray(list) && list.forEach(m => {
-      if (m && typeof m.label === 'string') m.label = m.label.replace(/Sản lượng ước\s+năm nay/i, 'Sản lượng ước tính năm nay');
-    }));
-    DATA.photos = DATA.photos || {};
-    Object.keys(PHOTOS).forEach(id => { if ((DATA.photos[id] || 0) !== PHOTOS[id].length) delete PHOTOS[id]; });
-    byId = {};
-    DATA.lo.rows.forEach(p => { byId[p.id] = p; });
-    $('#btnExport').hidden = !DATA.user.isAdmin;
-    if (GPS.fix) { GPS.inPlot = plotAt(GPS.fix.coords.latitude, GPS.fix.coords.longitude); gpsUpdateBadge(); }
-    renderChips();
-    renderLayers();
-    if (firstLoad) {
-      firstLoad = false;
-      if (FOCUS_ID && byId[FOCUS_ID]) { sel = FOCUS_ID; renderLayers(); showPlot(sel, true); return; }
-      fitAll();
-    } else if (!keepView) fitAll();
-    if (sel && byId[sel]) showPlot(sel, false); else { sel = null; showList(); }
+    const d = await call('getData');
+    const sig = hashStr(JSON.stringify(d));
+    if (DATA && sig === dataSig) { cacheShownAt = 0; return; }
+    if (background && (hasUnsaved() || savesPending || !$('#modal').hidden)) return;
+    cache.put(d, sig);          // lưu bản gốc từ máy chủ trước khi áp dụng
+    dataSig = sig;
+    cacheShownAt = 0;
+    applyData(d, keepView);
   } catch (e) {
-    if (!e.auth) $('#panelBody').innerHTML = '<p class="err">' + esc(e.message || e) + '</p>';
+    if (e.auth) return;
+    if (DATA) toast((cacheShownAt ? 'Đang xem dữ liệu lưu trên máy lúc ' + fmtTime(cacheShownAt) + '. ' : '') + (e.message || e), 7000);
+    else $('#panelBody').innerHTML = '<p class="err">' + esc(e.message || e) + '</p>';
   } finally {
     busy(false);
   }
+}
+
+// Mở app: hiện ngay bản lưu trên máy (nếu có), đồng thời lấy bản mới ở nền
+async function boot() {
+  if (!store.get(TOKEN_KEY)) { showLogin(); return; }
+  const rec = await cache.get();
+  if (rec && !DATA) {
+    try {
+      dataSig = rec.sig || null;
+      cacheShownAt = rec.t;
+      applyData(rec.data, false);
+    } catch (e) { DATA = null; dataSig = null; cacheShownAt = 0; }
+  }
+  load(!!DATA, !!DATA);
 }
 
 function pointOf(p) {
@@ -1469,6 +1564,7 @@ function submitChanges(id, lo, ho) {
   refreshLayer(id);
   if (sel === id) showPlot(id, false);
   savesPending++;
+  dataSig = null;
   busy(true);
   toast('Đang lưu…', 1500);
   saveChain = saveChain.then(async () => {
@@ -1498,12 +1594,13 @@ function submitChanges(id, lo, ho) {
       if (!hasUnsaved()) load(true);
     } finally {
       savesPending--;
-      if (!savesPending) busy(false);
+      if (!savesPending) { busy(false); saveCacheSoon(); }
     }
   });
 }
 
 function replacePlot(plot) {
+  dataSig = null;
   const i = DATA.lo.rows.findIndex(x => x.id === plot.id);
   if (i >= 0) DATA.lo.rows[i] = plot; else DATA.lo.rows.push(plot);
   byId[plot.id] = plot;
@@ -2516,6 +2613,7 @@ async function submitNew() {
   refreshLayer(id);
   showPlot(id, true);
   savesPending++;
+  dataSig = null;
   busy(true);
   toast('Đang tạo lô ' + id + '…', 1500);
   saveChain = saveChain.then(async () => {
@@ -2532,7 +2630,7 @@ async function submitNew() {
       if (!hasUnsaved()) load(true);
     } finally {
       savesPending--;
-      if (!savesPending) busy(false);
+      if (!savesPending) { busy(false); saveCacheSoon(); }
     }
   });
 }
@@ -2575,7 +2673,7 @@ setInterval(() => {
   if (DATA && !hasUnsaved() && !savesPending && $('#modal').hidden && document.visibilityState === 'visible') load(true);
 }, 120000);
 
-if (store.get(TOKEN_KEY)) load(false); else showLogin();
+boot();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
