@@ -181,6 +181,7 @@
   details.grp[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 10px; }
   #checks { margin: 8px 0; }
   .who { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .codes { font-size: 14px; margin: 2px 0 8px; display: grid; gap: 2px; }
   .mainf { margin-top: 10px; }
   .more-btn { width: 100%; margin: 6px 0 10px; background: var(--bg); color: var(--accent); font-weight: 600; }
   .grp { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px 2px; margin: 10px 0; }
@@ -1127,16 +1128,18 @@ function showPlot(id, zoom) {
   const ctx = { nLo: siblings.length, nCrop: f && f.props.CayTrong ? 1 : 0 };
 
   let h = `<button class="link" id="back">← Danh sách</button>
-    <h2>${esc(p.id)} ${tagsHtml(p)}</h2>
-    <div class="who">${f ? esc([f.props.HoDem, f.props.Ten].filter(Boolean).join(' ')) : ''}<span class="muted">${f ? ' · ' + esc(f.id) : ''}</span></div>
+    <h2>${f ? esc(farmName(f) || f.id) : esc(p.id)} ${tagsHtml(p)}</h2>`;
+  // Tên chủ hộ trước, sau đó mã RA (mã lô · mã hộ) và mã 4C
+  const prs = progsOf(p), pr4 = prs.filter(k => /^4C/.test(k));
+  const ma4c = String(p.props.MaLo4C || (prs.includes('RA') ? (f && f.props.Ma4C) : p.id) || '').trim();
+  h += `<div class="codes">`;
+  if (prs.includes('RA') || !pr4.length) h += `<div>Mã RA: <b>${esc(p.id)}</b>${f ? ` <span class="muted">· hộ ${esc(f.id)}</span>` : ''}</div>`;
+  if (pr4.length && ma4c) h += `<div>Mã ${esc(pr4.join(', '))}: <b>${esc(ma4c)}</b>${!prs.includes('RA') && f ? ` <span class="muted">· hộ ${esc(f.id)}</span>` : ''}</div>`;
+  h += `</div>
     <div class="stats">
       Diện tích đo từ polygon: <b id="areaVal">${area != null ? fmtHa(area) : '—'}</b>
       · ${srcLabel(p)}: <b>${esc(p.props.DienTich_ha ?? '—')}</b> ha
     </div>`;
-  // Hộ tham gia 4C (kể cả hộ RA + 4C): hiện mã 4C của lô (hoặc của hộ nếu lô chưa có)
-  const pr4 = progsOf(p).filter(k => /^4C/.test(k));
-  const ma4c = String(p.props.MaLo4C || (f && f.props.Ma4C) || '').trim();
-  if (pr4.length && ma4c) h += `<div class="stats">Mã ${esc(pr4.join(', '))}: <b>${esc(ma4c)}</b></div>`;
   if (p.props.__geomError) h += `<p class="err">Ô Polygon của lô này chứa dữ liệu không đọc được. Vẽ lại hoặc nhập lại từ KML.</p>`;
   if (!p.geometry) h += `<p class="muted">Lô chưa có ranh giới${pointOf(p) ? ' (đang hiện điểm GPS)' : ' và chưa có điểm GPS'}.</p>`;
   if (canEdit) {
