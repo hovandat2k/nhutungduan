@@ -1381,14 +1381,20 @@ function startGeomEdit() {
 
 function removeGeom() {
   if (!confirm('Xóa polygon của lô ' + sel + '?')) return;
-  // Xóa sạch: cả polygon lẫn vĩ độ/kinh độ (không để lại point)
-  submitChanges(sel, { props: { [C.lat]: '', [C.lon]: '' }, geometry: null }, null);
+  // Xóa sạch: cả polygon lẫn vĩ độ/kinh độ (không để lại point), rồi đóng khung thông tin
+  const id = sel;
+  sel = null;
+  submitChanges(id, { props: { [C.lat]: '', [C.lon]: '' }, geometry: null }, null);
+  showList();
 }
 
 /** Xóa điểm GPS của lô (lô chưa có polygon): xóa vĩ độ/kinh độ, áp dụng khi bấm Lưu. */
 function removePoint() {
   if (!confirm('Xóa point của lô ' + sel + '?')) return;
-  submitChanges(sel, { props: { [C.lat]: '', [C.lon]: '' } }, null);
+  const id = sel;
+  sel = null;
+  submitChanges(id, { props: { [C.lat]: '', [C.lon]: '' } }, null);
+  showList();
 }
 
 function stopGeomTools() {
@@ -2476,24 +2482,44 @@ async function submitNew() {
     lat: NEW.mode === 'point' ? NEW.latlng.lat : null, lon: NEW.mode === 'point' ? NEW.latlng.lng : null,
     farm: isNewFarm ? { HoDem: $('#nwHoDem').value.trim(), Ten: $('#nwTen').value.trim(),
       ThonXa: $('#nwXa').value.trim(), Tinh: $('#nwTinh').value.trim() } : null };
-  busy(true);
-  $('#nwOk').disabled = true;
-  try {
-    const r = await call('createPlot', item);
-    farms()[r.ho.id] = r.ho;
-    replacePlot(r.lo);
-    stopNew();
-    renderChips();
-    sel = r.lo.id;
-    renderLayers();
-    showPlot(sel, true);
-    toast(`Đã tạo lô ${r.lo.id}` + (r.newFarm ? ` và hộ mới ${r.ho.id}` : '') + ' ✓', 5000);
-  } catch (e) {
-    err('Không tạo được: ' + (e.message || e));
-    if ($('#nwOk')) $('#nwOk').disabled = false;
-  } finally {
-    busy(false);
+  // Hiện lô mới ngay trên bản đồ, gửi lên máy chủ ở nền (xếp hàng cùng các lần lưu)
+  const now = new Date(), z = n => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${z(now.getMonth() + 1)}-${z(now.getDate())} ${z(now.getHours())}:${z(now.getMinutes())}:${z(now.getSeconds())}`;
+  const me = DATA.user.email;
+  const lp = { [C.loId]: id, [C.farm]: farmId, [C.updated]: stamp, [C.updatedBy]: me, [C.action || 'ThaoTacCuoi']: item.geometry ? 'Tạo lô mới (vẽ polygon)' : 'Tạo lô mới (điểm)' };
+  if (area) lp.DienTich_ha = numOf(area);
+  if (!item.geometry) { lp[C.lat] = Math.round(item.lat * 1e6) / 1e6; lp[C.lon] = Math.round(item.lon * 1e6) / 1e6; }
+  replacePlot({ id, props: lp, geometry: item.geometry || null, version: '' });
+  if (isNewFarm) {
+    const fp = Object.assign({ [C.hoId]: farmId, [C.updated]: stamp, [C.updatedBy]: me }, item.farm);
+    C.programs.forEach(k => { fp[k] = !!programs[k]; });
+    farms()[farmId] = { id: farmId, props: fp, version: '' };
   }
+  stopNew();
+  sel = id;
+  renderChips();
+  refreshLayer(id);
+  showPlot(id, true);
+  savesPending++;
+  busy(true);
+  toast('Đang tạo lô ' + id + '…', 1500);
+  saveChain = saveChain.then(async () => {
+    try {
+      const r = await call('createPlot', item);
+      farms()[r.ho.id] = r.ho;
+      replacePlot(r.lo);
+      refreshLayer(r.lo.id);
+      if (sel === r.lo.id && !hasUnsaved()) showPlot(sel, false);
+      toast(`Đã tạo lô ${r.lo.id}` + (r.newFarm ? ` và hộ mới ${r.ho.id}` : '') + ' ✓', 4000);
+    } catch (e) {
+      toast('Không tạo được lô ' + id + ': ' + (e.message || e) + '. Vui lòng tạo lại.', 10000);
+      if (sel === id) sel = null;
+      if (!hasUnsaved()) load(true);
+    } finally {
+      savesPending--;
+      if (!savesPending) busy(false);
+    }
+  });
 }
 
 // ---------- Sự kiện ----------
