@@ -632,10 +632,11 @@ const foldVN = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').r
 function farmName(f) {
   if (!f) return '';
   const cols = C.listCols || [];
-  const nameKey = cols.find(k => /ten|hoten|name/i.test(k) && !ADDR_RE.test(k)) || cols[0];
-  let name = String(f.props[nameKey] ?? '').trim();
+  // Họ đệm + tên (mọi cột trong listCols trừ cột địa chỉ)
+  const nameKeys = cols.filter(k => !ADDR_RE.test(k));
+  let name = nameKeys.map(k => String(f.props[k] ?? '').trim()).filter(Boolean).join(' ');
   if (!name) return '';
-  const addr = new Set(Object.keys(f.props).filter(k => k !== nameKey && ADDR_RE.test(k))
+  const addr = new Set(Object.keys(f.props).filter(k => !nameKeys.includes(k) && ADDR_RE.test(k))
     .flatMap(k => foldVN(f.props[k] ?? '').split(/[^a-z0-9]+/)).filter(Boolean));
   ['xuan truong', 'da lat', 'lam dong', 'son la'].forEach(x => x.split(' ').forEach(w => addr.add(w)));
   const words = name.split(/\s+/);
