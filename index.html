@@ -1239,7 +1239,7 @@ function showPlot(id, zoom) {
   if (canEdit) {
     h += `<div class="row">
       <button id="gEdit">${p.geometry ? '✎ Sửa Polygon' : '✎ Vẽ Polygon'}</button>
-      ${p.geometry ? '<button id="gDel" class="danger">Xóa Polygon</button>' : ''}
+      ${p.geometry ? '<button id="gDel" class="danger">Xóa Polygon</button>' : pointOf(p) ? '<button id="pDel" class="danger">Xóa Point</button>' : ''}
     </div><p class="hint" id="gHint" hidden></p>`;
   }
   h += `<div id="checks"></div>`;
@@ -1309,6 +1309,7 @@ function showPlot(id, zoom) {
   if (canEdit) {
     $('#gEdit').onclick = startGeomEdit;
     if ($('#gDel')) $('#gDel').onclick = removeGeom;
+    if ($('#pDel')) $('#pDel').onclick = removePoint;
     $('#save').onclick = save;
     $('#cancel').onclick = () => cancelEdit(false);
   }
@@ -1355,6 +1356,7 @@ function startGeomEdit() {
   hint.hidden = false;
   $('#gEdit').disabled = true;
   if ($('#gDel')) $('#gDel').disabled = true;
+  if ($('#pDel')) $('#pDel').disabled = true;
   updateButtons();
 }
 
@@ -1366,6 +1368,18 @@ function removeGeom() {
   $('#areaVal').textContent = '— (chưa lưu)';
   $('#gEdit').disabled = true;
   $('#gDel').disabled = true;
+  renderChecks();
+  updateButtons();
+}
+
+/** Xóa điểm GPS của lô (lô chưa có polygon): xóa vĩ độ/kinh độ, áp dụng khi bấm Lưu. */
+function removePoint() {
+  if (!confirm('Xóa point của lô ' + sel + '? (Chỉ áp dụng khi bấm Lưu)')) return;
+  dirtyLo[C.lat] = ''; dirtyLo[C.lon] = '';
+  const l = layerById[sel];
+  if (l) plotGroup.removeLayer(l);
+  document.querySelectorAll(`#panelBody [data-kind="lo"][data-k="${C.lat}"], #panelBody [data-kind="lo"][data-k="${C.lon}"]`).forEach(el => { el.value = ''; });
+  $('#pDel').disabled = true;
   renderChecks();
   updateButtons();
 }
