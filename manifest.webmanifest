@@ -1,14 +1,14 @@
 {
-  "name": "Như Tùng – Bản đồ lô vườn",
-  "short_name": "Lô vườn",
+  "name": "Dự án NT",
+  "short_name": "Dự án NT",
   "description": "Quản lý lô vườn cà phê RA / 4C / CP",
   "lang": "vi",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0b5a22",
-  "theme_color": "#0b7a53",
+  "background_color": "#06501c",
+  "theme_color": "#0b6b2c",
   "icons": [
     {
       "src": "icons/icon-192.png",

@@ -83,6 +83,18 @@ jobs:
           jq --argjson c ${{ github.run_number }} --arg n "1.0.${{ github.run_number }}" \
             '.appVersionCode=$c | .appVersionName=$n' twa-manifest.json > t.json && mv t.json twa-manifest.json
 
+      - name: Chờ GitHub Pages cập nhật biểu tượng mới
+        run: |
+          for f in icons/icon-512.png icons/icon-maskable-512.png manifest.webmanifest; do
+            want=$(sha256sum "$f" | cut -d' ' -f1)
+            for i in $(seq 1 40); do
+              got=$(curl -fsSL "https://hovandat2k.github.io/nhutungduan/$f?nocache=$RANDOM$i" | sha256sum | cut -d' ' -f1)
+              [ "$got" = "$want" ] && { echo "OK $f"; break; }
+              [ $i = 40 ] && { echo "::error::Pages chưa cập nhật $f"; exit 1; }
+              sleep 15
+            done
+          done
+
       - name: Tạo dự án Android
         working-directory: android
         run: bubblewrap update --skipVersionUpgrade
@@ -131,6 +143,6 @@ jobs:
         run: |
           TAG="android-v1.0.${{ github.run_number }}"
           gh release create "$TAG" dist/NhuTung-DuAn.apk dist/NhuTung-DuAn.aab dist/assetlinks.json \
-            --title "App Android 1.0.${{ github.run_number }}" \
+            --title "Dự án NT 1.0.${{ github.run_number }}" \
             --notes "Cài trên Android: tải NhuTung-DuAn.apk, mở file, cho phép cài từ nguồn này. Bản này tự cập nhật đè lên bản cũ." \
             --latest
