@@ -65,6 +65,9 @@
     border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
   .dl-t { display: flex; align-items: center; gap: 8px; }
   .dl-b { display: flex; gap: 8px; flex-wrap: wrap; }
+  .dl-save { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px; }
+  .dl-save button { min-height: 44px; }
+  .dl-hint { display: block; font-size: 13px; }
   .eudr-legend { background: var(--bg); color: var(--fg); padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.6;
     box-shadow: 0 2px 8px rgba(0,0,0,.3); }
   .eudr-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
@@ -1517,26 +1520,77 @@ function doExport() {
       <span class="muted">${count(k)} lô</span></div><div class="dl-b">` +
     opts.map(([kind, label]) => `<button type="button" data-dl="${k}|${kind}">⬇ ${esc(label)}</button>`).join('') +
     `</div></div>`).join('') +
-    `<p class="muted" id="dlMsg">File được tạo từ dữ liệu mới nhất trong Sheet. Bản .xlsx cũng được lưu vào thư mục xuất trên Drive.</p></div>`, false);
+    `<p class="muted" id="dlMsg">File được tạo từ dữ liệu mới nhất trong Sheet và lưu thẳng về máy của bạn. ` +
+    (CAN_PICK ? 'Bấm nút nào sẽ hỏi chọn thư mục và tên file.' : 'Tạo xong bạn chọn <b>Lưu vào máy</b> hoặc <b>Lưu vào…</b> để chọn nơi lưu.') + `</p></div>`, false);
   $('#mBody').querySelectorAll('[data-dl]').forEach(b => { b.onclick = () => downloadOne(b, ...b.dataset.dl.split('|')); });
 }
-function saveBlob(name, mime, b64) {
+const CAN_PICK = typeof window.showSaveFilePicker === 'function' && window.isSecureContext;
+const DL_TYPES = {
+  xlsx: { description: 'Bảng tính Excel', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } },
+  kml: { description: 'Ranh giới KML', accept: { 'application/vnd.google-earth.kml+xml': ['.kml'] } }
+};
+function b64Blob(b64, mime) {
   const bin = atob(b64), arr = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  const url = URL.createObjectURL(new Blob([arr], { type: mime }));
+  return new Blob([arr], { type: mime || 'application/octet-stream' });
+}
+function dlStamp() {
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}`;
+}
+function guessName(code, kind) {
+  return (kind === 'kml' ? `Polygon_${code}` : (code === 'RA' ? 'GMR_RA' : `BPM_${code}`)) + `_${dlStamp()}.${kind}`;
+}
+// Tải thường: trình duyệt lưu vào thư mục Tải xuống (hoặc hỏi nơi lưu nếu đã bật "Hỏi nơi lưu").
+function saveBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+async function shareBlob(name, blob) {
+  const file = new File([blob], name, { type: blob.type });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    await navigator.share({ files: [file], title: name });
+    return true;
+  }
+  return false;
 }
 async function downloadOne(btn, code, kind) {
   const label = btn.textContent;
+  let handle = null;
+  // Máy tính (Chrome/Edge): hỏi nơi lưu NGAY khi bấm, trước khi tạo file (trình duyệt chỉ cho mở hộp thoại lúc vừa bấm).
+  if (CAN_PICK) {
+    try {
+      handle = await window.showSaveFilePicker({ suggestedName: guessName(code, kind), types: [DL_TYPES[kind]].filter(Boolean) });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;          // người dùng bấm Hủy
+      handle = null;                                     // trình duyệt chặn → dùng cách tải thường
+    }
+  }
   btn.disabled = true; btn.textContent = '⏳ Đang tạo…';
   busy(true);
   try {
-    const r = await call('downloadFile', code, kind);
-    saveBlob(r.name, r.mime, r.data);
-    $('#dlMsg').innerHTML = `Đã tải <b>${esc(r.name)}</b> (${r.farms} hộ · ${r.plots} lô)` +
-      (r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">mở bản trên Drive</a>` : '');
+    const r = await call('downloadFile', code, kind, { drive: false });
+    const blob = b64Blob(r.data, r.mime);
+    const info = `(${r.farms} hộ · ${r.plots} lô)`;
+    if (handle) {
+      const w = await handle.createWritable(); await w.write(blob); await w.close();
+      $('#dlMsg').innerHTML = `Đã lưu <b>${esc(handle.name)}</b> ${info} vào thư mục bạn chọn.`;
+    } else {
+      const name = r.name || guessName(code, kind);
+      const canShare = !!(navigator.canShare && navigator.canShare({ files: [new File([blob], name, { type: blob.type })] }));
+      $('#dlMsg').innerHTML = `Đã tạo <b>${esc(name)}</b> ${info}.` +
+        `<span class="dl-save"><button type="button" class="primary" id="dlSave">⬇ Lưu vào máy</button>` +
+        (canShare ? `<button type="button" id="dlShare">📂 Lưu vào… / Gửi</button>` : '') + `</span>` +
+        `<span class="muted dl-hint">"Lưu vào máy" lưu vào thư mục Tải xuống. ` +
+        (canShare ? '"Lưu vào…" mở danh sách để chọn nơi lưu: Tệp/Files, Drive, Zalo…' :
+          'Muốn chọn thư mục: Chrome → Cài đặt → Tải xuống → bật "Hỏi nơi lưu".') + `</span>`;
+      $('#dlSave').onclick = () => saveBlob(name, blob);
+      if (canShare) $('#dlShare').onclick = () => shareBlob(name, blob).catch(e => {
+        if (!e || e.name !== 'AbortError') toast('Không mở được danh sách lưu: ' + (e.message || e));
+      });
+    }
   } catch (e) {
     $('#dlMsg').innerHTML = '<span class="err">Không tạo được ' + esc(code + ' ' + kind.toUpperCase()) + ': ' + esc(e.message || e) + '</span>';
   } finally {
