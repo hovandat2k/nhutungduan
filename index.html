@@ -1739,26 +1739,23 @@ function gpsHowTo() {
   if (!IN_APP) return `<ol class="steps"><li>Bấm biểu tượng <b>ổ khóa / ⚙</b> bên trái thanh địa chỉ.</li>
        <li>Chọn <b>Quyền</b> (hoặc <b>Cài đặt trang web</b>) → <b>Vị trí</b> → <b>Cho phép</b>.</li>
        <li>Tải lại trang rồi bấm <b>Thử lại</b>.</li></ol>`;
-  const restart = `<li><b>Đóng hẳn app</b>: bấm nút đa nhiệm (■) → vuốt bỏ "Dự án NT", rồi mở lại app từ biểu tượng.
-       Quyền mới chỉ có tác dụng sau khi mở lại.</li>`;
-  return gpsDenials < 2
-    ? `<ol class="steps"><li>Nhấn giữ biểu tượng <b>"Dự án NT"</b> → <b>ⓘ Thông tin ứng dụng</b> → <b>Quyền</b> → <b>Vị trí</b> →
-         <b>Chỉ cho phép khi dùng ứng dụng</b>, bật <b>Sử dụng vị trí chính xác</b>.</li>${restart}</ol>`
-    : `<p><b>Nếu đã cho phép và mở lại app mà vẫn không được</b>, kiểm tra thêm 2 chỗ (app chạy bên trong Chrome):</p>
-       <ol class="steps"><li>Nhấn giữ biểu tượng <b>"Dự án NT"</b> → chọn <b>Cài đặt trang web</b> (Site settings) → <b>Vị trí</b> → <b>Cho phép</b>.</li>
-       <li><b>Cài đặt</b> điện thoại → <b>Ứng dụng</b> → <b>Chrome</b> → <b>Quyền</b> → <b>Vị trí</b> → <b>Chỉ cho phép khi dùng ứng dụng</b>.</li>
-       ${restart}</ol>`;
+  // App Android chạy trang bên trong Chrome: quyền vị trí do Chrome quản lý
+  return `<ol class="steps">
+       <li>Nhấn giữ biểu tượng <b>"Dự án NT"</b> → <b>Cài đặt trang web</b> → <b>Vị trí</b> → <b>Cho phép</b>.
+         (Nếu chưa thấy mục Vị trí: bấm <b>Xoá dữ liệu và đặt lại quyền</b>, mở lại app, bấm ◎ và chọn <b>Cho phép</b>.)</li>
+       <li><b>Cài đặt</b> điện thoại → <b>Ứng dụng</b> → <b>Chrome</b> → <b>Quyền</b> → <b>Vị trí</b> → <b>Chỉ cho phép khi dùng ứng dụng</b>, bật <b>Vị trí chính xác</b>.</li>
+       <li><b>Đóng hẳn app</b> (nút đa nhiệm ■ → vuốt bỏ "Dự án NT") rồi mở lại.</li></ol>`;
 }
 let gpsRetry = null;               // việc cần làm lại sau khi được cấp quyền
 function gpsDialog(kind) {
   const title = kind === 'ask' ? 'Cho phép dùng vị trí' : kind === 'off' ? 'Vị trí (GPS) đang tắt' : 'Chưa được phép dùng vị trí';
   const body = kind === 'ask'
     ? `<p>App cần vị trí của bạn để hiện chấm xanh trên bản đồ, cho biết bạn đang đứng trong lô nào và lấy tọa độ khi tạo lô mới.</p>
-       <p class="muted">Bấm <b>Cho phép</b>, điện thoại sẽ hỏi quyền — chọn <b>Khi dùng ứng dụng</b> và <b>Chính xác</b>.</p>`
+       <p class="muted">Bấm <b>Cho phép</b>, điện thoại sẽ hỏi quyền (có thể hỏi 2 lần: cho trang và cho Chrome) — chọn <b>Cho phép</b> / <b>Khi dùng ứng dụng</b> và <b>Chính xác</b>.</p>`
     : kind === 'off'
     ? `<p>Điện thoại đang tắt định vị. Kéo thanh thông báo từ trên xuống và bật <b>Vị trí</b>, rồi bấm <b>Thử lại</b>.</p>
        <p class="muted">Ở trong nhà hoặc dưới tán cây dày GPS có thể lâu có tín hiệu — ra chỗ thoáng sẽ nhanh hơn.</p>`
-    : `<p>${gpsDenials < 2 ? 'Quyền vị trí đang bị chặn nên app không tự hỏi lại được. Bật lại như sau:' : 'Vẫn chưa lấy được quyền vị trí.'}</p>${gpsHowTo()}
+    : `<p>Quyền vị trí đang bị chặn nên app không tự hỏi lại được. Bật lại như sau:</p>${gpsHowTo()}
        <p class="muted">Nhớ bật cả <b>Vị trí (GPS)</b> trên thanh thông báo.</p>`;
   $('#toast').style.display = 'none';
   openModal(title, `<div class="gpsdlg">${body}<div class="gpsdlg-b">

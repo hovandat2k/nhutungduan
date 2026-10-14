@@ -26,11 +26,7 @@
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://hovandat2k.github.io/nhutungduan/manifest.webmanifest",
   "fallbackType": "customtabs",
-  "features": {
-    "locationDelegation": {
-      "enabled": true
-    }
-  },
+  "features": {},
   "alphaDependencies": {
     "enabled": false
   },
