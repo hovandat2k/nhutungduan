@@ -724,21 +724,40 @@ function renderLayers() {
   layerById = {};
   DATA.lo.rows.forEach(p => {
     if (!visible(p) && p.id !== sel) return;
-    let layer = null;
-    if (p.geometry) {
-      try { layer = L.geoJSON(p.geometry, { style: styleFor(p), renderer: plotCanvas }).getLayers()[0]; } catch (e) { layer = null; }
-    } else {
-      const ll = pointOf(p);
-      if (ll) layer = L.circleMarker(ll, Object.assign({ color: '#fff', fillColor: colorOf(p), fillOpacity: 1, renderer: plotCanvas }, ptStyle()));
-    }
+    const layer = makeLayer(p);
     if (!layer) return;
-    layer.on('click', () => { if (!NEW && !map.pm.globalDrawModeEnabled()) select(p.id); });
-    const f = farmOf(p);
-    layer.bindTooltip(esc(p.id) + (f ? '<br>' + esc(farmName(f)) : ''), { sticky: true });
     plotGroup.addLayer(layer);
     layerById[p.id] = layer;
   });
   renderLabels();
+}
+let lastLayerClick = 0;
+function makeLayer(p) {
+  let layer = null;
+  if (p.geometry) {
+    try { layer = L.geoJSON(p.geometry, { style: styleFor(p), renderer: plotCanvas }).getLayers()[0]; } catch (e) { layer = null; }
+  } else {
+    const ll = pointOf(p);
+    if (ll) layer = L.circleMarker(ll, Object.assign({ color: '#fff', fillColor: colorOf(p), fillOpacity: 1, renderer: plotCanvas }, ptStyle()));
+  }
+  if (!layer) return null;
+  layer.on('click', e => {
+    L.DomEvent.stopPropagation(e);                 // không để lan ra bản đồ (bấm khoảng trống = bỏ chọn)
+    lastLayerClick = Date.now();
+    if (!NEW && !map.pm.globalDrawModeEnabled()) select(p.id);
+  });
+  const f = farmOf(p);
+  layer.bindTooltip(esc(p.id) + (f ? '<br>' + esc(farmName(f)) : ''), { sticky: true });
+  return layer;
+}
+/** Vẽ lại riêng một lô (nhanh hơn vẽ lại cả 2.900 lô). */
+function refreshLayer(id) {
+  const old = layerById[id];
+  if (old) { plotGroup.removeLayer(old); delete layerById[id]; }
+  const p = byId[id];
+  if (!p || (!visible(p) && id !== sel)) return;
+  const l = makeLayer(p);
+  if (l) { plotGroup.addLayer(l); layerById[id] = l; if (id === sel && l.bringToFront) l.bringToFront(); }
 }
 
 // Tên chủ hộ trên bản đồ khi phóng gần (zoom >= LABEL_ZOOM)
@@ -1361,27 +1380,15 @@ function startGeomEdit() {
 }
 
 function removeGeom() {
-  if (!confirm('Xóa polygon của lô ' + sel + '? (Chỉ áp dụng khi bấm Lưu)')) return;
-  geomRemoved = true;
-  const l = layerById[sel];
-  if (l) plotGroup.removeLayer(l);
-  $('#areaVal').textContent = '— (chưa lưu)';
-  $('#gEdit').disabled = true;
-  $('#gDel').disabled = true;
-  renderChecks();
-  updateButtons();
+  if (!confirm('Xóa polygon của lô ' + sel + '?')) return;
+  // Xóa sạch: cả polygon lẫn vĩ độ/kinh độ (không để lại point)
+  submitChanges(sel, { props: { [C.lat]: '', [C.lon]: '' }, geometry: null }, null);
 }
 
 /** Xóa điểm GPS của lô (lô chưa có polygon): xóa vĩ độ/kinh độ, áp dụng khi bấm Lưu. */
 function removePoint() {
-  if (!confirm('Xóa point của lô ' + sel + '? (Chỉ áp dụng khi bấm Lưu)')) return;
-  dirtyLo[C.lat] = ''; dirtyLo[C.lon] = '';
-  const l = layerById[sel];
-  if (l) plotGroup.removeLayer(l);
-  document.querySelectorAll(`#panelBody [data-kind="lo"][data-k="${C.lat}"], #panelBody [data-kind="lo"][data-k="${C.lon}"]`).forEach(el => { el.value = ''; });
-  $('#pDel').disabled = true;
-  renderChecks();
-  updateButtons();
+  if (!confirm('Xóa point của lô ' + sel + '?')) return;
+  submitChanges(sel, { props: { [C.lat]: '', [C.lon]: '' } }, null);
 }
 
 function stopGeomTools() {
@@ -1403,46 +1410,76 @@ function cancelEdit(silent) {
   if (!silent && sel) showPlot(sel, false);
 }
 
-async function save() {
+function save() {
   const p = byId[sel], f = farmOf(p);
   if (geomEdit && geomEdit.isNew && !geomEdit.layer) {
     toast('Bạn chưa vẽ xong: chạm lại vào điểm đầu tiên để khép kín polygon.');
     return;
   }
-  const payload = {};
-  const loChanged = Object.keys(dirtyLo).length || geomRemoved || (geomEdit && geomChanged);
-  if (loChanged) {
-    payload.lo = { id: p.id, version: p.version, props: dirtyLo };
-    if (geomRemoved) payload.lo.geometry = null;
-    else if (geomEdit && geomChanged) payload.lo.geometry = currentGeom();
+  let lo = null, ho = null;
+  if (Object.keys(dirtyLo).length || geomRemoved || (geomEdit && geomChanged)) {
+    lo = { props: Object.assign({}, dirtyLo) };
+    if (geomRemoved) { lo.geometry = null; lo.props[C.lat] = ''; lo.props[C.lon] = ''; }
+    else if (geomEdit && geomChanged) lo.geometry = currentGeom();
   }
-  if (Object.keys(dirtyHo).length && f) payload.ho = { id: f.id, version: f.version, props: dirtyHo };
+  if (Object.keys(dirtyHo).length && f) ho = { id: f.id, props: Object.assign({}, dirtyHo) };
+  stopGeomTools();
+  dirtyLo = {}; dirtyHo = {};
+  if (lo || ho) submitChanges(p.id, lo, ho);
+  else showPlot(sel, false);
+}
 
-  busy(true);
-  $('#save').disabled = true;
-  try {
-    const res = await call('saveAll', payload);
-    const msgs = [];
-    if (res.lo) {
-      replacePlot(res.lo.item);
-      if (res.lo.conflict) msgs.push('Lô vừa được ' + (res.lo.item.props[C.updatedBy] || 'người khác') + ' sửa lúc ' + res.lo.item.props[C.updated]);
-    }
-    if (res.ho) {
-      farms()[res.ho.item.id] = res.ho.item;
-      if (res.ho.conflict) msgs.push('Hộ vừa được ' + (res.ho.item.props[C.updatedBy] || 'người khác') + ' sửa lúc ' + res.ho.item.props[C.updated]);
-    }
-    toast(msgs.length ? msgs.join('. ') + '. Đã tải bản mới nhất, vui lòng sửa lại.' : 'Đã lưu ✓', msgs.length ? 9000 : 3000);
-    stopGeomTools();
-    dirtyLo = {}; dirtyHo = {};
-    renderChips();
-    renderLayers();
-    showPlot(sel, false);
-  } catch (e) {
-    toast('Lỗi khi lưu: ' + (e.message || e), 9000);
-    updateButtons();
-  } finally {
-    busy(false);
+/**
+ * Lưu kiểu "hiện ngay": cập nhật bản đồ và khung thông tin ngay lập tức, gửi lên máy chủ ở nền
+ * (các lần lưu xếp hàng lần lượt). Lỗi thì báo và tải lại dữ liệu từ máy chủ.
+ */
+let saveChain = Promise.resolve(), savesPending = 0;
+function submitChanges(id, lo, ho) {
+  const p0 = byId[id];
+  if (lo && p0) {
+    const p1 = Object.assign({}, p0, { props: Object.assign({}, p0.props, lo.props) });
+    if (lo.geometry !== undefined) p1.geometry = lo.geometry;
+    replacePlot(p1);
   }
+  if (ho && farms()[ho.id]) {
+    const f0 = farms()[ho.id];
+    farms()[ho.id] = Object.assign({}, f0, { props: Object.assign({}, f0.props, ho.props) });
+  }
+  refreshLayer(id);
+  if (sel === id) showPlot(id, false);
+  savesPending++;
+  busy(true);
+  toast('Đang lưu…', 1500);
+  saveChain = saveChain.then(async () => {
+    const payload = {};
+    if (lo) {
+      payload.lo = { id, version: byId[id] ? byId[id].version : undefined, props: lo.props };
+      if (lo.geometry !== undefined) payload.lo.geometry = lo.geometry;
+    }
+    if (ho) payload.ho = { id: ho.id, version: farms()[ho.id] ? farms()[ho.id].version : undefined, props: ho.props };
+    try {
+      const res = await call('saveAll', payload);
+      const msgs = [];
+      if (res.lo) {
+        replacePlot(res.lo.item);
+        if (res.lo.conflict) msgs.push('Lô vừa được ' + (res.lo.item.props[C.updatedBy] || 'người khác') + ' sửa lúc ' + res.lo.item.props[C.updated]);
+      }
+      if (res.ho) {
+        farms()[res.ho.item.id] = res.ho.item;
+        if (res.ho.conflict) msgs.push('Hộ vừa được ' + (res.ho.item.props[C.updatedBy] || 'người khác') + ' sửa lúc ' + res.ho.item.props[C.updated]);
+      }
+      if (msgs.length) toast(msgs.join('. ') + '. Đã tải bản mới nhất, vui lòng sửa lại.', 9000);
+      else toast('Đã lưu ✓', 2000);
+      if (!geomEdit) refreshLayer(id);
+      if (sel === id && !hasUnsaved()) showPlot(id, false);
+    } catch (e) {
+      toast('Lỗi khi lưu: ' + (e.message || e) + '. Đang tải lại dữ liệu…', 9000);
+      if (!hasUnsaved()) load(true);
+    } finally {
+      savesPending--;
+      if (!savesPending) busy(false);
+    }
+  });
 }
 
 function replacePlot(plot) {
@@ -2280,7 +2317,19 @@ function startNew(how) {
   }
 }
 
-map.on('click', e => { if (NEW && NEW.picking) setNewPoint(e.latlng); });
+map.on('click', e => {
+  if (NEW && NEW.picking) { setNewPoint(e.latlng); return; }
+  // Bấm vào khoảng trống: bỏ chọn lô (trừ khi đang vẽ/sửa hoặc có thay đổi chưa lưu)
+  if (!sel) return;
+  setTimeout(() => {                                   // chờ xem cú bấm có trúng một lô không
+    if (Date.now() - lastLayerClick < 400) return;
+    if (!sel || NEW || geomEdit || map.pm.globalDrawModeEnabled() || hasUnsaved()) return;
+    const prev = sel;
+    sel = null;
+    if (byId[prev] && !visible(byId[prev])) refreshLayer(prev); else restyle();
+    showList();
+  }, 0);
+});
 
 function setNewPoint(ll, acc) {
   NEW.picking = false; NEW.latlng = ll; NEW.acc = acc;
@@ -2482,7 +2531,7 @@ window.addEventListener('beforeunload', e => { if (hasUnsaved()) { e.preventDefa
 
 // Tự làm mới mỗi 2 phút để thấy thay đổi của người khác (khi không đang sửa)
 setInterval(() => {
-  if (DATA && !hasUnsaved() && $('#modal').hidden && document.visibilityState === 'visible') load(true);
+  if (DATA && !hasUnsaved() && !savesPending && $('#modal').hidden && document.visibilityState === 'visible') load(true);
 }, 120000);
 
 if (store.get(TOKEN_KEY)) load(false); else showLogin();
