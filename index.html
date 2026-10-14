@@ -681,6 +681,10 @@ async function load(keepView) {
   try {
     DATA = await call('getData');
     C = DATA.cfg;
+    // Đổi nhãn hiển thị trên bản đồ (không đổi tên cột trong Sheet)
+    Object.values(C.fields || {}).forEach(list => Array.isArray(list) && list.forEach(m => {
+      if (m && typeof m.label === 'string') m.label = m.label.replace(/Sản lượng ước\s+năm nay/i, 'Sản lượng ước tính năm nay');
+    }));
     DATA.photos = DATA.photos || {};
     Object.keys(PHOTOS).forEach(id => { if ((DATA.photos[id] || 0) !== PHOTOS[id].length) delete PHOTOS[id]; });
     byId = {};
