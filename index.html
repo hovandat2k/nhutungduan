@@ -185,6 +185,7 @@
   .more-btn { width: 100%; margin: 6px 0 10px; background: var(--bg); color: var(--accent); font-weight: 600; }
   .grp { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px 2px; margin: 10px 0; }
   .grp-t { font-weight: 600; padding: 9px 0; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+  .lastedit { padding-bottom: 10px; font-size: 14px; }
   .plabel { background: none; border: 0; }
   .plabel span { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; color: #fff; font: 600 12px/1.2 system-ui, sans-serif;
     text-shadow: 0 0 3px #000, 0 0 2px #000, 0 1px 2px #000; pointer-events: none; }
@@ -904,7 +905,7 @@ function select(id) {
 }
 
 let fidSeq = 0;
-const SKIP_COLS = () => new Set(C.programs.concat([C.updated, C.updatedBy, 'Polygon']));
+const SKIP_COLS = () => new Set(C.programs.concat([C.updated, C.updatedBy, C.action || 'ThaoTacCuoi', 'Polygon']));
 let showMore = false;
 
 function metaOf(kind, col) {
@@ -999,6 +1000,22 @@ function fieldHtml(kind, m, obj, ro, ctx) {
     ${m.hint ? `<div class="fhint">${esc(m.hint)}</div>` : ''}<div class="ferr">${esc(err)}</div></div>`;
 }
 
+const BPM_KEYS_DEFAULT = ['ho:HoDem', 'ho:Ten', 'ho:GioiTinh', 'ho:CCCD', 'lo:MaLo4C', 'ho:ThonXa', 'ho:Tinh', 'lo:ViDo', 'lo:KinhDo',
+  'ho:LaoDongThuongXuyen', 'ho:LaoDongThoiVu', 'ho:SanLuongUoc_kg', 'lo:DienTich_ha', 'ho:Giong', 'ho:DaiLy'];
+
+/** Lần tạo/sửa gần nhất của lô (hoặc của hộ, nếu sửa hộ mới hơn): tên người, giờ, thao tác. */
+function lastEditHtml(p, f) {
+  const A = C.action || 'ThaoTacCuoi';
+  const cand = [[p, 'lô'], [f, 'hộ']].filter(([o]) => o && o.props[C.updated])
+    .map(([o, k]) => ({ t: String(o.props[C.updated]), by: o.props[C.updatedBy], act: o.props[A], k }))
+    .sort((a, b) => b.t.localeCompare(a.t));
+  const e = cand[0];
+  const when = t => { const m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?/); return m ? (m[4] ? m[4] + ':' + m[5] + ' ' : '') + m[3] + '/' + m[2] + '/' + m[1] : t; };
+  return `<div class="grp lastedit"><div class="grp-t">Cập nhật gần nhất</div>` + (e
+    ? `<div><b>${esc(e.by || '(không rõ)')}</b> · ${esc(when(e.t))}</div><div class="muted">${esc(e.act || 'Sửa thông tin ' + e.k)}</div>`
+    : `<div class="muted">Chưa có ai tạo hoặc sửa trên bản đồ.</div>`) + `</div>`;
+}
+
 function fieldsHtml(p, f, ro, ctx) {
   const L1 = layout();
   const one = ({ kind, m }) => {
@@ -1007,12 +1024,22 @@ function fieldsHtml(p, f, ro, ctx) {
     const sysRo = m.col && (kind === 'ho' ? C.readonlyHo : C.readonlyLo).includes(m.col) && m.col !== C.farm;
     return fieldHtml(kind, m, obj, ro || sysRo, ctx);
   };
+  // Hộ chỉ có 4C (không RA): "Hiển thị thêm" chỉ giữ các ô có trong file BPM
+  const pr = progsOf(p), only4C = pr.length > 0 && !pr.includes('RA');
+  let more = L1.more;
+  if (only4C) {
+    const keep = new Set((C.fields && C.fields.layout && C.fields.layout.bpm) || BPM_KEYS_DEFAULT);
+    more = more.map(g => ({ group: g.group, items: g.items.filter(it => keep.has(it.kind + ':' + it.m.col)) }))
+      .filter(g => g.items.length);
+  }
   let h = `<div class="mainf">` + L1.main.map(one).join('') + `</div>`;
   h += `<button class="more-btn" id="btnMore" type="button">${showMore ? '▲ Ẩn bớt' : '▼ Hiển thị thêm'}</button>`;
   h += `<div id="moreBox" ${showMore ? '' : 'hidden'}>`;
-  L1.more.forEach(g => {
+  if (only4C) h += `<p class="muted">Hộ chỉ tham gia ${esc(pr.join(', '))}: chỉ hiện các thông tin có trong file BPM.</p>`;
+  more.forEach(g => {
     h += `<div class="grp"><div class="grp-t">${esc(g.group)}</div>` + g.items.map(one).join('') + `</div>`;
   });
+  h += lastEditHtml(p, f);
   return h + `</div>`;
 }
 
