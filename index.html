@@ -65,6 +65,12 @@
     border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
   .dl-t { display: flex; align-items: center; gap: 8px; }
   .dl-b { display: flex; gap: 8px; flex-wrap: wrap; }
+  .gpsdlg { padding: 6px 0 4px; line-height: 1.5; }
+  .gpsdlg p { margin: 8px 0; }
+  .gpsdlg .steps { margin: 8px 0; padding-left: 22px; }
+  .gpsdlg .steps li { margin: 6px 0; }
+  .gpsdlg-b { display: flex; gap: 10px; margin-top: 14px; }
+  .gpsdlg-b button { flex: 1; min-height: 46px; font-size: 16px; }
   .dl-save { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px; }
   .dl-save button { min-height: 44px; }
   .dl-hint { display: block; font-size: 13px; }
@@ -1703,14 +1709,73 @@ function gpsSupported() {
   if (!navigator.geolocation) { toast('Trình duyệt này không hỗ trợ định vị.'); return false; }
   return true;
 }
-function gpsError(e) {
-  const msg = e.code === 1
-    ? 'Chưa được phép dùng vị trí. Hãy bật Vị trí (GPS) trên điện thoại và cho phép trang này truy cập vị trí (biểu tượng ổ khóa cạnh thanh địa chỉ → Quyền → Vị trí).'
-    : e.code === 3 ? 'Không lấy được vị trí (hết thời gian chờ). Hãy ra chỗ thoáng và thử lại.'
-    : 'Không lấy được vị trí: ' + (e.message || 'lỗi không xác định');
-  toast(msg, 10000);
-  if (e.code === 1) { gpsStop(); gpsRemember(false); }
+// App Android (TWA) mở trang với referrer android-app://…; nhớ lại cho các lần tải sau
+const IN_APP = (() => {
+  try {
+    if (document.referrer.startsWith('android-app://')) localStorage.setItem('lv_inapp', '1');
+    return localStorage.getItem('lv_inapp') === '1';
+  } catch (e) { return document.referrer.startsWith('android-app://'); }
+})();
+async function gpsPermState() {
+  try { return (await navigator.permissions.query({ name: 'geolocation' })).state; } catch (e) { return 'unknown'; }
 }
+function gpsHowTo() {
+  return IN_APP
+    ? `<ol class="steps"><li>Thoát ra màn hình chính, <b>nhấn giữ biểu tượng "Dự án NT"</b> → chọn <b>ⓘ Thông tin ứng dụng</b>.</li>
+       <li>Chọn <b>Quyền</b> → <b>Vị trí</b> → <b>Cho phép khi dùng ứng dụng</b> (bật thêm <b>Dùng vị trí chính xác</b> nếu có).</li>
+       <li>Quay lại app và bấm <b>Thử lại</b>.</li></ol>`
+    : `<ol class="steps"><li>Bấm biểu tượng <b>ổ khóa / ⚙</b> bên trái thanh địa chỉ.</li>
+       <li>Chọn <b>Quyền</b> (hoặc <b>Cài đặt trang web</b>) → <b>Vị trí</b> → <b>Cho phép</b>.</li>
+       <li>Tải lại trang rồi bấm <b>Thử lại</b>.</li></ol>`;
+}
+let gpsRetry = null;               // việc cần làm lại sau khi được cấp quyền
+function gpsDialog(kind) {
+  const title = kind === 'ask' ? 'Cho phép dùng vị trí' : kind === 'off' ? 'Vị trí (GPS) đang tắt' : 'Chưa được phép dùng vị trí';
+  const body = kind === 'ask'
+    ? `<p>App cần vị trí của bạn để hiện chấm xanh trên bản đồ, cho biết bạn đang đứng trong lô nào và lấy tọa độ khi tạo lô mới.</p>
+       <p class="muted">Bấm <b>Cho phép</b>, điện thoại sẽ hỏi quyền — chọn <b>Khi dùng ứng dụng</b> và <b>Chính xác</b>.</p>`
+    : kind === 'off'
+    ? `<p>Điện thoại đang tắt định vị. Kéo thanh thông báo từ trên xuống và bật <b>Vị trí</b>, rồi bấm <b>Thử lại</b>.</p>
+       <p class="muted">Ở trong nhà hoặc dưới tán cây dày GPS có thể lâu có tín hiệu — ra chỗ thoáng sẽ nhanh hơn.</p>`
+    : `<p>Quyền vị trí đang bị chặn nên điện thoại không hỏi lại được. Bật lại như sau:</p>${gpsHowTo()}
+       <p class="muted">Nhớ bật cả <b>Vị trí (GPS)</b> trên thanh thông báo.</p>`;
+  openModal(title, `<div class="gpsdlg">${body}<div class="gpsdlg-b">
+      <button type="button" class="primary" id="gpsGo">${kind === 'ask' ? 'Cho phép' : 'Thử lại'}</button>
+      <button type="button" id="gpsLater">Để sau</button></div></div>`, false);
+  $('#gpsGo').onclick = () => { closeModal(); const f = gpsRetry; gpsRetry = null; if (f) f(); };
+  $('#gpsLater').onclick = () => {
+    closeModal(); gpsRetry = null;
+    if (typeof NEW !== 'undefined' && NEW && NEW.mode === 'point' && !NEW.latlng) { NEW.picking = true; newPanel('Chạm vào vị trí trên bản đồ để đặt điểm.'); }
+  };
+}
+// Gọi trước mọi lần dùng vị trí do người dùng bấm: chưa hỏi → giải thích rồi mới hỏi; đã chặn → hướng dẫn mở quyền
+async function gpsEnsure(go) {
+  if (!gpsSupported()) return;
+  const st = await gpsPermState();
+  if (st === 'granted' || st === 'unknown') return go();
+  gpsRetry = go;
+  gpsDialog(st === 'denied' ? 'denied' : 'ask');
+}
+function gpsError(e, retry) {
+  if (e.code === 1 || e.code === 2) {
+    if (e.code === 1) { gpsStop(); gpsRemember(false); }
+    else if (!retry) { if (GPS.warned) return; GPS.warned = true; }   // theo dõi liên tục: chỉ báo một lần
+    gpsRetry = retry || (() => gpsStart());
+    gpsDialog(e.code === 1 ? 'denied' : 'off');
+    return;
+  }
+  toast(e.code === 3 ? 'Không lấy được vị trí (hết thời gian chờ). Hãy ra chỗ thoáng và thử lại.'
+    : 'Không lấy được vị trí: ' + (e.message || 'lỗi không xác định'), 8000);
+}
+// Bật quyền xong (trong Cài đặt) quay lại app: tự chạy tiếp, khỏi bấm Thử lại
+(async () => {
+  try {
+    const ps = await navigator.permissions.query({ name: 'geolocation' });
+    ps.onchange = () => {
+      if (ps.state === 'granted' && gpsRetry) { if (!$('#modal').hidden) closeModal(); const f = gpsRetry; gpsRetry = null; f(); }
+    };
+  } catch (e) {}
+})();
 function plotAt(lat, lng) {
   for (const p of DATA.lo.rows) {
     const g = p.geometry;
@@ -1803,7 +1868,7 @@ const GPS_KEY = 'lv_gps';
 function gpsRemember(v) { try { localStorage.setItem(GPS_KEY, v ? '1' : '0'); } catch (e) {} }
 function gpsStart(quiet) {
   if (!gpsSupported()) return;
-  GPS.first = !quiet; GPS.follow = !quiet;
+  GPS.first = !quiet; GPS.follow = !quiet; GPS.warned = false;
   gpsRemember(true);
   GPS.watch = navigator.geolocation.watchPosition(gpsOnFix, gpsError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 30000 });
   headStart();
@@ -1833,7 +1898,7 @@ const LocateCtl = L.Control.extend({
     L.DomEvent.disableClickPropagation(div);
     L.DomEvent.on(a, 'click', e => {
       L.DomEvent.preventDefault(e);
-      if (GPS.watch == null) gpsStart();
+      if (GPS.watch == null) gpsEnsure(() => gpsStart());
       else if (!GPS.follow) { headStart(); GPS.follow = true; gpsStyle(); if (GPS.fix) panToVisible(L.latLng(GPS.fix.coords.latitude, GPS.fix.coords.longitude), Math.max(map.getZoom(), 17)); }
       else { gpsStop(); gpsRemember(false); }
     });
@@ -2146,10 +2211,16 @@ function startNew(how) {
       setNewPoint(L.latLng(pos.coords.latitude, pos.coords.longitude), acc);
     };
     if (GPS.fix && Date.now() - GPS.fix.timestamp < 15000) use(GPS.fix);
-    else navigator.geolocation.getCurrentPosition(use, e => {
-      gpsError(e);
-      if (NEW && !NEW.latlng) { NEW.picking = true; newPanel('Không lấy được GPS. Chạm vào bản đồ để chọn vị trí.'); }
-    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+    else {
+      const getFix = () => {
+        if (NEW && !NEW.latlng) { NEW.picking = false; newPanel('Đang lấy vị trí của bạn…'); }
+        navigator.geolocation.getCurrentPosition(use, e => {
+          gpsError(e, getFix);
+          if (NEW && !NEW.latlng) { NEW.picking = true; newPanel('Không lấy được GPS. Chạm vào bản đồ để chọn vị trí.'); }
+        }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+      };
+      gpsEnsure(getFix);
+    }
   } else if (how === 'tap') {
     NEW.picking = true;
     newPanel('Chạm vào vị trí trên bản đồ để đặt điểm.');
