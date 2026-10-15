@@ -1368,7 +1368,7 @@ function showPlot(id, zoom) {
   if (canEdit) {
     h += `<div class="row">
       <button id="gEdit">${p.geometry ? '✎ Sửa Polygon' : '✎ Vẽ Polygon'}</button>
-      ${p.geometry ? '<button id="gDel" class="danger">Xóa Polygon</button>' : pointOf(p) ? '<button id="pDel" class="danger">Xóa Point</button>' : ''}
+      ${p.geometry ? '<button id="gDel" class="danger">Xóa Polygon</button>' : pointOf(p) ? '<button id="pDel" class="danger">Xóa Point</button>' : '<button id="pDel" class="danger">Xóa lô</button>'}
     </div><p class="hint" id="gHint" hidden></p>`;
   }
   h += `<div id="checks"></div>`;
@@ -1489,22 +1489,46 @@ function startGeomEdit() {
   updateButtons();
 }
 
-function removeGeom() {
-  if (!confirm('Xóa polygon của lô ' + sel + '?')) return;
-  // Xóa sạch: cả polygon lẫn vĩ độ/kinh độ (không để lại point), rồi đóng khung thông tin
-  const id = sel;
+// Xóa point/polygon = xóa hẳn cả lô (dòng trong sheet Lo; bản sao lưu ở LichSu)
+function removeGeom() { deletePlotUI(sel); }
+function removePoint() { deletePlotUI(sel); }
+function deletePlotUI(id) {
+  const p = byId[id];
+  if (!p) return;
+  if (!confirm(`Xóa lô ${id}?\nLô sẽ bị xóa hẳn khỏi danh sách (cả vị trí và thông tin của lô). Bản sao được lưu ở sheet LichSu.`)) return;
+  // Bỏ khỏi bản đồ và danh sách ngay, gửi lên máy chủ ở nền
+  const idx = DATA.lo.rows.findIndex(x => x.id === id);
+  if (idx >= 0) DATA.lo.rows.splice(idx, 1);
+  delete byId[id];
+  dataSig = null;
+  if (layerById[id]) { plotGroup.removeLayer(layerById[id]); delete layerById[id]; }
+  stopGeomTools();
+  dirtyLo = {}; dirtyHo = {};
   sel = null;
-  submitChanges(id, { props: { [C.lat]: '', [C.lon]: '' }, geometry: null }, null);
+  renderChips();
+  renderLabels();
   showList();
-}
-
-/** Xóa điểm GPS của lô (lô chưa có polygon): xóa vĩ độ/kinh độ, áp dụng khi bấm Lưu. */
-function removePoint() {
-  if (!confirm('Xóa point của lô ' + sel + '?')) return;
-  const id = sel;
-  sel = null;
-  submitChanges(id, { props: { [C.lat]: '', [C.lon]: '' } }, null);
-  showList();
+  savesPending++;
+  busy(true);
+  saveChain = saveChain.then(async () => {
+    try {
+      await call('deletePlot', id);
+      toast('Đã xóa lô ' + id + ' ✓', 3000);
+    } catch (e) {
+      const msg = String(e.message || e);
+      if (/deletePlot/.test(msg)) {
+        // Máy chủ chưa có chức năng xóa lô: tạm thời chỉ xóa vị trí
+        toast('Máy chủ chưa cập nhật chức năng xóa lô – tạm thời chỉ xóa vị trí của lô ' + id + '.', 9000);
+        try { await call('saveAll', { lo: { id, version: p.version, props: { [C.lat]: '', [C.lon]: '' }, geometry: p.geometry ? null : undefined } }); } catch (e2) {}
+      } else {
+        toast('Không xóa được lô ' + id + ': ' + msg + '. Đang tải lại dữ liệu…', 9000);
+      }
+      if (!hasUnsaved()) load(true);
+    } finally {
+      savesPending--;
+      if (!savesPending) { busy(false); saveCacheSoon(); }
+    }
+  });
 }
 
 function stopGeomTools() {
