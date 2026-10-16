@@ -2402,6 +2402,7 @@ function openAddMenu() {
   openModal('Tạo lô mới', `<div class="addmenu">
       <button type="button" data-add="gps"><span class="ic">📍</span><b>Điểm tại vị trí của tôi</b><span class="muted">Lấy tọa độ GPS của điện thoại</span></button>
       <button type="button" data-add="tap"><span class="ic">📌</span><b>Điểm chọn trên bản đồ</b><span class="muted">Chạm vào vị trí trên ảnh vệ tinh</span></button>
+      <button type="button" data-add="coord"><span class="ic">⌖</span><b>Điểm theo tọa độ</b><span class="muted">Nhập vĩ độ, kinh độ (số thập phân hoặc độ-phút-giây)</span></button>
       <button type="button" data-add="poly"><span class="ic">⬠</span><b>Vẽ polygon mới</b><span class="muted">Chạm lần lượt vào các góc lô</span></button>
     </div>`, false);
   $('#mBody').querySelectorAll('[data-add]').forEach(b => { b.onclick = () => { closeModal(); startNew(b.dataset.add); }; });
@@ -2438,6 +2439,11 @@ function startNew(how) {
       };
       gpsEnsure(getFix);
     }
+  } else if (how === 'coord') {
+    NEW.picking = true;
+    newPanel('Nhập tọa độ của điểm (hoặc chạm vào bản đồ để chọn).');
+    setSheet('peek');
+    coordDialog();
   } else if (how === 'tap') {
     NEW.picking = true;
     newPanel('Chạm vào vị trí trên bản đồ để đặt điểm.');
@@ -2472,6 +2478,69 @@ map.on('click', e => {
     showList();
   }, 0);
 });
+
+// ---------- Nhập tọa độ cho điểm mới ----------
+// Nhận: "11.870522, 108.540002" · "11,870522 108,540002" · "11°52'13.9\"N 108°32'24.0\"E" · "N 11 52.232 E 108 32.400"
+function parseCoords(txt) {
+  let t = String(txt || '').trim().replace(/[\u2032\u2019']/g, "'").replace(/[\u2033\u201d\u201c]|''/g, '"');
+  if (!t) return null;
+  if (/[°º'"]|[NSEW]/i.test(t)) {
+    // Độ-phút-giây: tách thành 2 nhóm theo chữ N/S/E/W (đứng trước hoặc sau) hoặc theo dấu °
+    const toks = t.match(/-?\d+(?:[.,]\d+)?|[NSEW°º]/gi) || [];
+    const isH = x => /^[NSEW]$/i.test(x), prefix = toks.length && isH(toks[0]);
+    const groups = [];
+    let cur = { nums: [], h: '' };
+    const flush = () => { if (cur.nums.length) groups.push(cur); cur = { nums: [], h: '' }; };
+    toks.forEach(x => {
+      if (isH(x)) { if (prefix) { flush(); cur.h = x.toUpperCase(); } else { cur.h = x.toUpperCase(); flush(); } }
+      else if (x === '°' || x === 'º') { if (cur.nums.length > 1) { const d = cur.nums.pop(); flush(); cur.nums.push(d); } }
+      else { if (cur.nums.length === 3) flush(); cur.nums.push(Number(x.replace(',', '.'))); }
+    });
+    flush();
+    if (groups.length !== 2) return null;
+    const val = g => { const [d, m = 0, sec = 0] = g.nums; let v = Math.abs(d) + m / 60 + sec / 3600; if (d < 0 || g.h === 'S' || g.h === 'W') v = -v; return v; };
+    let [a, b] = groups;
+    if (a.h === 'E' || a.h === 'W' || b.h === 'N' || b.h === 'S') [a, b] = [b, a];
+    return checkLL(val(a), val(b));
+  }
+  // Số thập phân: dấu phẩy là dấu thập phân nếu không có dấu chấm và hai số cách nhau bởi khoảng trắng/chấm phẩy
+  let nums;
+  if (!t.includes('.') && /\d,\d+[\s;]+-?\d+,\d/.test(t)) nums = t.split(/[\s;]+/).map(x => x.replace(',', '.'));
+  else nums = t.split(/[\s,;]+/);
+  nums = nums.filter(Boolean).map(Number);
+  if (nums.length !== 2 || nums.some(x => !isFinite(x))) return null;
+  return checkLL(nums[0], nums[1]);
+}
+function checkLL(lat, lon) {
+  if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) [lat, lon] = [lon, lat];        // nhập ngược kinh độ, vĩ độ
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return L.latLng(lat, lon);
+}
+function coordDialog() {
+  const cur = NEW && NEW.latlng;
+  openModal('Nhập tọa độ', `<div class="gpsdlg">
+      <div class="field"><label for="cdIn">Vĩ độ, kinh độ</label>
+        <input type="text" id="cdIn" autocomplete="off" placeholder="vd: 11.870522, 108.540002" value="${cur ? cur.lat.toFixed(6) + ', ' + cur.lng.toFixed(6) : ''}"></div>
+      <p class="muted">Dán từ Google Maps, GPS hoặc file: <b>11.870522, 108.540002</b> · <b>11,870522 108,540002</b> · <b>11°52'13.9"N 108°32'24.0"E</b></p>
+      <div class="ferr" id="cdErr"></div>
+      <div class="gpsdlg-b"><button type="button" class="primary" id="cdOk">Đặt điểm</button><button type="button" id="cdNo">Hủy</button></div></div>`, false);
+  const inp = $('#cdIn');
+  setTimeout(() => { inp.focus(); inp.select(); }, 50);
+  const ok = () => {
+    const ll = parseCoords(inp.value);
+    if (!ll) { $('#cdErr').textContent = 'Không đọc được tọa độ. Nhập vĩ độ trước, kinh độ sau, ví dụ 11.870522, 108.540002.'; return; }
+    closeModal();
+    if (!NEW) return;
+    if (Math.abs(ll.lat) < 5 || ll.lng < 95 || ll.lng > 115 || ll.lat > 25) toast(`Lưu ý: tọa độ ${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)} nằm ngoài Việt Nam – kiểm tra lại.`, 8000);
+    if (NEW.latlng && $('#nwId')) {                    // đang điền form: chỉ dời điểm, giữ các ô đã nhập
+      NEW.latlng = ll; NEW.acc = null; NEW.layer.setLatLng(ll); updateNewInfo();
+      panToVisible(ll, Math.max(map.getZoom(), 17));
+    } else setNewPoint(ll);
+  };
+  $('#cdOk').onclick = ok;
+  inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ok(); } };
+  $('#cdNo').onclick = closeModal;
+}
 
 function setNewPoint(ll, acc) {
   NEW.picking = false; NEW.latlng = ll; NEW.acc = acc;
@@ -2553,6 +2622,7 @@ function showNewForm() {
   const dl = (id, vals) => `<datalist id="${id}">` + vals.map(v => `<option value="${esc(v)}">`).join('') + '</datalist>';
   let h = `<button class="link" id="newCancel">✕ Hủy tạo mới</button><h2>Tạo lô mới</h2>
     <div class="stats" id="newInfo">${esc(newInfoText())}</div>
+    ${NEW.mode === 'point' ? '<button type="button" class="link" id="nwCoord">⌖ Nhập / sửa tọa độ</button>' : ''}
     <div class="field"><label for="nwFarm">Mã hộ <span class="req">*</span></label>
       <input type="text" id="nwFarm" list="nwFids" autocomplete="off" placeholder="Chọn hộ có sẵn hoặc nhập mã hộ mới">
       ${dl('nwFids', Object.keys(farms()))}</div>
@@ -2597,6 +2667,7 @@ function showNewForm() {
   };
   $('#newCancel').onclick = cancelNew;
   $('#nwCancel2').onclick = cancelNew;
+  if ($('#nwCoord')) $('#nwCoord').onclick = coordDialog;
   $('#nwOk').onclick = submitNew;
 }
 
