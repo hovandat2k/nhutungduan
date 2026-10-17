@@ -344,6 +344,7 @@ let layerById = {};
 let sel = null;
 let dirtyLo = {}, dirtyHo = {};
 let geomEdit = null, geomChanged = false, geomRemoved = false;
+let PT = null;                       // { marker } khi đang sửa vị trí điểm (Sửa Point)
 let importLayer = null, importItems = [];
 let firstLoad = true;
 let filter = {};            // { RA: true, '4C': true, CP: true, none: true }
@@ -854,6 +855,7 @@ function makeLayer(p) {
   layer.on('click', e => {
     L.DomEvent.stopPropagation(e);                 // không để lan ra bản đồ (bấm khoảng trống = bỏ chọn)
     lastLayerClick = Date.now();
+    if (PT) { setPointPos(e.latlng); return; }        // đang sửa Point: chạm đâu đặt điểm ở đó
     if (!NEW && !map.pm.globalDrawModeEnabled()) select(p.id);
   });
   const f = farmOf(p);
@@ -1038,7 +1040,7 @@ function showList() {
 
 // ---------- Chi tiết lô + hộ ----------
 function hasUnsaved() {
-  return Object.keys(dirtyLo).length > 0 || Object.keys(dirtyHo).length > 0 || !!geomEdit || geomRemoved || !!NEW;
+  return Object.keys(dirtyLo).length > 0 || Object.keys(dirtyHo).length > 0 || !!geomEdit || !!PT || geomRemoved || !!NEW;
 }
 
 function confirmDiscard() {
@@ -1366,6 +1368,7 @@ function showPlot(id, zoom) {
   if (!p.geometry) h += `<p class="muted">Lô chưa có ranh giới${pointOf(p) ? ' (đang hiện điểm GPS)' : ' và chưa có điểm GPS'}.</p>`;
   if (canEdit) {
     h += `<div class="row">
+      ${!p.geometry && pointOf(p) ? '<button id="ptEdit">✎ Sửa Point</button>' : ''}
       <button id="gEdit">${p.geometry ? '✎ Sửa Polygon' : '✎ Vẽ Polygon'}</button>
       ${p.geometry ? '<button id="gDel" class="danger">Xóa Polygon</button>' : pointOf(p) ? '<button id="pDel" class="danger">Xóa Point</button>' : '<button id="pDel" class="danger">Xóa lô</button>'}
     </div><p class="hint" id="gHint" hidden></p>`;
@@ -1414,6 +1417,10 @@ function showPlot(id, zoom) {
       const kind = el.dataset.kind, col = el.dataset.k;
       const d = kind === 'ho' ? dirtyHo : dirtyLo;
       d[col] = el.type === 'checkbox' ? el.checked : el.value;
+      if (PT && kind === 'lo' && (col === C.lat || col === C.lon)) {
+        const la = numOf(curVal('lo', byId[sel], C.lat)), ln = numOf(curVal('lo', byId[sel], C.lon));
+        if (la != null && ln != null && isFinite(la) && isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180) setPointPos(L.latLng(la, ln), true);
+      }
       const box = el.closest('.field') || el.closest('.prog');
       box.classList.add('changed');
       const m = metaOf(kind, col);
@@ -1436,6 +1443,7 @@ function showPlot(id, zoom) {
   });
   if (canEdit) {
     $('#gEdit').onclick = startGeomEdit;
+    if ($('#ptEdit')) $('#ptEdit').onclick = startPointEdit;
     if ($('#gDel')) $('#gDel').onclick = removeGeom;
     if ($('#pDel')) $('#pDel').onclick = removePoint;
     $('#save').onclick = save;
@@ -1488,6 +1496,55 @@ function startGeomEdit() {
   updateButtons();
 }
 
+// ---------- Sửa Point: kéo điểm, chạm bản đồ, nhập tọa độ hoặc lấy GPS ----------
+function setPointPos(ll, fromField) {
+  if (!PT) return;
+  PT.marker.setLatLng(ll);
+  const lat = (+ll.lat).toFixed(6), lng = (+ll.lng).toFixed(6);
+  dirtyLo[C.lat] = lat; dirtyLo[C.lon] = lng;
+  if (!fromField) [[C.lat, lat], [C.lon, lng]].forEach(([c, v]) => {
+    const el = document.querySelector(`[data-kind="lo"][data-k="${c}"]`);
+    if (el) { el.value = v; const b = el.closest('.field'); if (b) b.classList.add('changed'); }
+  });
+  if ($('#ptPos')) $('#ptPos').textContent = `${lat}, ${lng}`;
+  renderChecks();
+  updateButtons();
+}
+function startPointEdit() {
+  const p = byId[sel], pt = pointOf(p);
+  if (!pt) return;
+  const old = layerById[sel];
+  if (old) old.setStyle({ opacity: 0.25, fillOpacity: 0.25 });
+  const marker = L.marker(pt, { draggable: true, autoPan: true, zIndexOffset: 1000,
+    icon: L.divIcon({ className: 'newpin', html: '<span></span>', iconSize: [22, 22], iconAnchor: [11, 11] }) }).addTo(map);
+  PT = { marker };
+  marker.on('dragend', () => setPointPos(marker.getLatLng()));
+  const hint = $('#gHint');
+  hint.innerHTML = `Kéo điểm cam tới vị trí đúng, hoặc chạm vào bản đồ để đặt lại điểm. Vị trí mới: <b id="ptPos">${pt[0].toFixed(6)}, ${pt[1].toFixed(6)}</b>
+    <span class="row" style="margin-top:6px"><button type="button" id="ptCoord">⌖ Nhập tọa độ</button><button type="button" id="ptGps">📍 Vị trí của tôi</button></span>`;
+  hint.hidden = false;
+  $('#ptCoord').onclick = () => coordDialog(ll => { setPointPos(ll); panToVisible(ll, Math.max(map.getZoom(), 17)); }, marker.getLatLng());
+  $('#ptGps').onclick = () => {
+    if (!gpsSupported()) return toast('Thiết bị không hỗ trợ định vị.');
+    const use = pos => {
+      const ll = L.latLng(pos.coords.latitude, pos.coords.longitude), acc = Math.round(pos.coords.accuracy);
+      if (acc > 30) toast(`Độ chính xác GPS hiện tại ±${acc} m. Có thể kéo điểm cam để chỉnh lại.`, 7000);
+      setPointPos(ll); panToVisible(ll, Math.max(map.getZoom(), 17));
+    };
+    if (GPS.fix && Date.now() - GPS.fix.timestamp < 15000) return use(GPS.fix);
+    const getFix = () => navigator.geolocation.getCurrentPosition(use, e => gpsError(e, getFix), { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+    gpsEnsure(getFix);
+  };
+  ['ptEdit', 'gEdit', 'pDel'].forEach(k => { if ($('#' + k)) $('#' + k).disabled = true; });
+  panToVisible(L.latLng(pt), Math.max(map.getZoom(), 17));
+  updateButtons();
+}
+function stopPointEdit() {
+  if (!PT) return;
+  map.removeLayer(PT.marker);
+  PT = null;
+}
+
 // Xóa point/polygon = xóa hẳn cả lô (dòng trong sheet Lo; bản sao lưu ở LichSu)
 function removeGeom() { deletePlotUI(sel); }
 function removePoint() { deletePlotUI(sel); }
@@ -1532,6 +1589,7 @@ function deletePlotUI(id) {
 
 function stopGeomTools() {
   stopNew();
+  stopPointEdit();
   gtStop();
   map.pm.disableDraw();
   map.off('pm:create');
@@ -1583,7 +1641,7 @@ function submitChanges(id, lo, ho) {
   const p0 = byId[id];
   if (lo && p0) {
     const p1 = Object.assign({}, p0, { props: Object.assign({}, p0.props, lo.props, localStamp(lo.geometry !== undefined
-      ? (lo.geometry ? 'Sửa ranh giới' : 'Xóa ranh giới') : 'Sửa thông tin lô')) });
+      ? (lo.geometry ? 'Sửa ranh giới' : 'Xóa ranh giới') : (lo.props[C.lat] !== undefined || lo.props[C.lon] !== undefined) ? 'Sửa vị trí điểm' : 'Sửa thông tin lô')) });
     if (lo.geometry !== undefined) p1.geometry = lo.geometry;
     replacePlot(p1);
   }
@@ -2473,11 +2531,12 @@ function startNew(how) {
 
 map.on('click', e => {
   if (NEW && NEW.picking) { setNewPoint(e.latlng); return; }
+  if (PT) { setPointPos(e.latlng); return; }
   // Bấm vào khoảng trống: bỏ chọn lô (trừ khi đang vẽ/sửa hoặc có thay đổi chưa lưu)
   if (!sel) return;
   setTimeout(() => {                                   // chờ xem cú bấm có trúng một lô không
     if (Date.now() - lastLayerClick < 400) return;
-    if (!sel || NEW || geomEdit || map.pm.globalDrawModeEnabled() || hasUnsaved()) return;
+    if (!sel || NEW || geomEdit || PT || map.pm.globalDrawModeEnabled() || hasUnsaved()) return;
     const prev = sel;
     sel = null;
     if (byId[prev] && !visible(byId[prev])) refreshLayer(prev); else restyle();
@@ -2522,8 +2581,9 @@ function checkLL(lat, lon) {
   if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
   return L.latLng(lat, lon);
 }
-function coordDialog() {
-  const cur = NEW && NEW.latlng;
+function coordDialog(onPick, cur0) {
+  if (typeof onPick !== 'function') onPick = null;
+  const cur = onPick ? cur0 : NEW && NEW.latlng;
   openModal('Nhập tọa độ', `<div class="gpsdlg">
       <div class="field"><label for="cdIn">Vĩ độ, kinh độ</label>
         <input type="text" id="cdIn" autocomplete="off" placeholder="vd: 11.870522, 108.540002" value="${cur ? cur.lat.toFixed(6) + ', ' + cur.lng.toFixed(6) : ''}"></div>
@@ -2536,8 +2596,9 @@ function coordDialog() {
     const ll = parseCoords(inp.value);
     if (!ll) { $('#cdErr').textContent = 'Không đọc được tọa độ. Nhập vĩ độ trước, kinh độ sau, ví dụ 11.870522, 108.540002.'; return; }
     closeModal();
-    if (!NEW) return;
     if (Math.abs(ll.lat) < 5 || ll.lng < 95 || ll.lng > 115 || ll.lat > 25) toast(`Lưu ý: tọa độ ${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)} nằm ngoài Việt Nam – kiểm tra lại.`, 8000);
+    if (onPick) return onPick(ll);
+    if (!NEW) return;
     if (NEW.latlng && $('#nwId')) {                    // đang điền form: chỉ dời điểm, giữ các ô đã nhập
       NEW.latlng = ll; NEW.acc = null; NEW.layer.setLatLng(ll); updateNewInfo();
       panToVisible(ll, Math.max(map.getZoom(), 17));
