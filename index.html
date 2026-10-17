@@ -207,7 +207,7 @@
   .more-btn { width: 100%; margin: 6px 0 10px; background: var(--bg); color: var(--accent); font-weight: 600; }
   .grp { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px 2px; margin: 10px 0; }
   .grp-t { font-weight: 600; padding: 9px 0; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
-  .lastedit { padding-bottom: 10px; font-size: 14px; }
+  .lastedit { margin: -2px 0 10px; font-size: 13px; line-height: 1.4; }
   .plabel { background: none; border: 0; }
   .plabel span { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; color: #fff; font: 600 12px/1.2 system-ui, sans-serif;
     text-shadow: 0 0 3px #000, 0 0 2px #000, 0 1px 2px #000; pointer-events: none; }
@@ -1166,10 +1166,10 @@ function lastEditHtml(p, f) {
     .map(([o, k]) => ({ t: String(o.props[C.updated]), by: o.props[C.updatedBy], act: o.props[A], k }))
     .sort((a, b) => b.t.localeCompare(a.t));
   const e = cand[0];
-  const when = t => { const m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?/); return m ? (m[4] ? m[4] + ':' + m[5] + ' ' : '') + m[3] + '/' + m[2] + '/' + m[1] : t; };
-  return `<div class="grp lastedit"><div class="grp-t">Cập nhật gần nhất</div>` + (e
-    ? `<div><b>${esc(e.by || '(không rõ)')}</b> · ${esc(when(e.t))}</div><div class="muted">${esc(e.act || 'Sửa thông tin ' + e.k)}</div>`
-    : `<div class="muted">Chưa có ai tạo hoặc sửa trên bản đồ.</div>`) + `</div>`;
+  const when = t => { const m = t.match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2}))?/); return m ? (m[4] ? m[4] + ':' + m[5] : '00:00') + ' ' + m[3] + '/' + m[2] + '/' + m[1] : t; };
+  return `<div class="lastedit"><span class="muted">Cập nhật gần nhất:</span> ` + (e
+    ? `<b>${esc(e.by || '(không rõ)')}</b> · ${esc(when(e.t))} · <span class="muted">${esc(e.act || 'Sửa thông tin ' + e.k)}</span>`
+    : `<span class="muted">chưa có</span>`) + `</div>`;
 }
 
 function fieldsHtml(p, f, ro, ctx) {
@@ -1195,7 +1195,6 @@ function fieldsHtml(p, f, ro, ctx) {
   more.forEach(g => {
     h += `<div class="grp"><div class="grp-t">${esc(g.group)}</div>` + g.items.map(one).join('') + `</div>`;
   });
-  h += lastEditHtml(p, f);
   return h + `</div>`;
 }
 
@@ -1371,7 +1370,7 @@ function showPlot(id, zoom) {
       ${p.geometry ? '<button id="gDel" class="danger">Xóa Polygon</button>' : pointOf(p) ? '<button id="pDel" class="danger">Xóa Point</button>' : '<button id="pDel" class="danger">Xóa lô</button>'}
     </div><p class="hint" id="gHint" hidden></p>`;
   }
-  h += `<div id="checks"></div>`;
+  h += `<div id="checks"></div>` + lastEditHtml(p, f);
 
   if (f) {
     h += `<div class="muted">Chương trình tham gia</div><div class="progs">`;
@@ -1574,16 +1573,23 @@ function save() {
  * (các lần lưu xếp hàng lần lượt). Lỗi thì báo và tải lại dữ liệu từ máy chủ.
  */
 let saveChain = Promise.resolve(), savesPending = 0;
+/** Dấu "Cập nhật gần nhất" hiện ngay trên máy (máy chủ ghi dấu thật khi lưu xong). */
+function localStamp(act) {
+  const now = new Date(), z = n => String(n).padStart(2, '0');
+  return { [C.updated]: `${now.getFullYear()}-${z(now.getMonth() + 1)}-${z(now.getDate())} ${z(now.getHours())}:${z(now.getMinutes())}:${z(now.getSeconds())}`,
+    [C.updatedBy]: DATA.user.name || DATA.user.email, [C.action || 'ThaoTacCuoi']: act };
+}
 function submitChanges(id, lo, ho) {
   const p0 = byId[id];
   if (lo && p0) {
-    const p1 = Object.assign({}, p0, { props: Object.assign({}, p0.props, lo.props) });
+    const p1 = Object.assign({}, p0, { props: Object.assign({}, p0.props, lo.props, localStamp(lo.geometry !== undefined
+      ? (lo.geometry ? 'Sửa ranh giới' : 'Xóa ranh giới') : 'Sửa thông tin lô')) });
     if (lo.geometry !== undefined) p1.geometry = lo.geometry;
     replacePlot(p1);
   }
   if (ho && farms()[ho.id]) {
     const f0 = farms()[ho.id];
-    farms()[ho.id] = Object.assign({}, f0, { props: Object.assign({}, f0.props, ho.props) });
+    farms()[ho.id] = Object.assign({}, f0, { props: Object.assign({}, f0.props, ho.props, localStamp('Sửa thông tin hộ')) });
   }
   refreshLayer(id);
   if (sel === id) showPlot(id, false);
@@ -2692,7 +2698,7 @@ async function submitNew() {
   // Hiện lô mới ngay trên bản đồ, gửi lên máy chủ ở nền (xếp hàng cùng các lần lưu)
   const now = new Date(), z = n => String(n).padStart(2, '0');
   const stamp = `${now.getFullYear()}-${z(now.getMonth() + 1)}-${z(now.getDate())} ${z(now.getHours())}:${z(now.getMinutes())}:${z(now.getSeconds())}`;
-  const me = DATA.user.email;
+  const me = DATA.user.name || DATA.user.email;
   const lp = { [C.loId]: id, [C.farm]: farmId, [C.updated]: stamp, [C.updatedBy]: me, [C.action || 'ThaoTacCuoi']: item.geometry ? 'Tạo lô mới (vẽ polygon)' : 'Tạo lô mới (điểm)' };
   if (area) lp.DienTich_ha = numOf(area);
   if (!item.geometry) { lp[C.lat] = Math.round(item.lat * 1e6) / 1e6; lp[C.lon] = Math.round(item.lon * 1e6) / 1e6; }
