@@ -282,6 +282,8 @@
     white-space: normal; padding: 12px 14px; font-size: 15px; }
   .addmenu .ic { grid-row: span 2; font-size: 22px; text-align: center; }
   #mFoot[hidden] { display: none; }
+  .qpin span { display: block; width: 18px; height: 18px; border-radius: 50%; background: #e53935; border: 3px solid #fff; box-shadow: 0 0 0 2px #e53935, 0 1px 4px rgba(0,0,0,.4); }
+  .item.coord { border-left: 4px solid #e53935; }
   .newpin span { display: block; width: 22px; height: 22px; border-radius: 50%; background: #ff7a00; border: 3px solid #fff;
     box-shadow: 0 0 0 2px #ff7a00, 0 2px 6px rgba(0,0,0,.5); }
   .quick { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
@@ -292,7 +294,7 @@
 <body>
 <div id="app">
   <div id="bar">
-    <input id="q" type="search" placeholder="Tìm tên chủ hộ hoặc mã vườn…">
+    <input id="q" type="search" placeholder="Tìm tên chủ hộ, mã vườn hoặc tọa độ…">
     <button id="btnMenu" title="Bộ lọc và công cụ" aria-label="Menu"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg></button>
     <div id="chips"></div>
     <div id="busy"></div>
@@ -1017,15 +1019,56 @@ function matches(p, q) {
   return fold(p.id).includes(q) || name.includes(q);
 }
 
+// ---------- Tìm theo tọa độ ngay trong ô tìm kiếm ----------
+/** Ô tìm kiếm là tọa độ? (cần số thập phân hoặc ký hiệu độ để không nhầm với mã vườn) */
+function coordQuery(v) {
+  v = String(v || '').trim();
+  if (!/\d[.,]\d|[°º]/.test(v)) return null;
+  try { return parseCoords(v); } catch (e) { return null; }
+}
+/** Lô chứa điểm (polygon), hoặc lô gần nhất (kể cả lô dạng điểm) */
+function plotsNear(ll) {
+  let inside = null, near = null, nd = Infinity;
+  DATA.lo.rows.forEach(p => {
+    if (p.geometry) {
+      try { if (!inside && inGeom(ll.lng, ll.lat, p.geometry)) inside = p; } catch (e) {}
+    }
+    const l = layerById[p.id];
+    const c = l ? (l.getBounds ? l.getBounds().getCenter() : l.getLatLng()) : (pointOf(p) ? L.latLng(pointOf(p)) : null);
+    if (!c) return;
+    const d = map.distance(ll, c);
+    if (d < nd) { nd = d; near = p; }
+  });
+  return { inside, near, nd };
+}
+let qPin = null;
+function goCoord(ll) {
+  if (qPin) map.removeLayer(qPin);
+  qPin = L.marker(ll, { zIndexOffset: 900, icon: L.divIcon({ className: 'qpin', html: '<span></span>', iconSize: [18, 18], iconAnchor: [9, 9] }) })
+    .addTo(map).bindTooltip(`${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}<br><small>Bấm để bỏ ghim</small>`, { direction: 'top', offset: [0, -10] });
+  qPin.on('click', () => { map.removeLayer(qPin); qPin = null; });
+  panToVisible(ll, Math.max(map.getZoom(), 17));
+}
+function coordItemHtml(ll) {
+  const r = plotsNear(ll);
+  let h = `<div class="item coord" id="qGo"><b>📍 Đến tọa độ ${ll.lat.toFixed(6)}, ${ll.lng.toFixed(6)}</b>
+    <span class="muted">Bấm (hoặc Enter) để đặt ghim đỏ trên bản đồ</span></div>`;
+  if (r.inside) h += `<div class="item" data-id="${esc(r.inside.id)}"><b>Nằm trong lô ${esc(r.inside.id)}</b>${tagsHtml(r.inside)}<span class="muted">${esc(farmName(farmOf(r.inside)))}</span></div>`;
+  else if (r.near) h += `<div class="item" data-id="${esc(r.near.id)}"><b>Lô gần nhất: ${esc(r.near.id)}</b> <span class="muted">~${r.nd < 1000 ? Math.round(r.nd) + ' m' : (r.nd / 1000).toFixed(1) + ' km'}</span>${tagsHtml(r.near)}<span class="muted">${esc(farmName(farmOf(r.near)))}</span></div>`;
+  return h;
+}
+
 function showList() {
-  const q = fold($('#q').value);
+  const qll = coordQuery($('#q').value);
+  const q = qll ? '' : fold($('#q').value);
   const all = DATA.lo.rows;
-  const items = all.filter(p => visible(p) && matches(p, q));
+  const items = qll ? [] : all.filter(p => visible(p) && matches(p, q));
   const noGeom = all.filter(p => !p.geometry).length;
   let h = `<div class="stats"><b>${Object.keys(farms()).length}</b> hộ · <b>${all.length}</b> lô · <b>${noGeom}</b> lô chưa có ranh giới<br>
     <span class="muted">${esc(DATA.user.email || '')} ${DATA.user.role ? '· ' + esc(DATA.user.role) : ''}
     ${DATA.user.canEdit ? '' : '· chỉ xem'} · <button class="logout" id="btnLogout" type="button">Đăng xuất</button></span></div>`;
-  if (!items.length) h += '<p class="muted">Không có lô nào khớp.</p>';
+  if (qll) h += coordItemHtml(qll);
+  else if (!items.length) h += '<p class="muted">Không có lô nào khớp.</p>';
   items.slice(0, 300).forEach(p => {
     const badge = p.props.__geomError ? '<span class="badge err">polygon lỗi</span>'
       : !p.geometry ? '<span class="badge warn">chưa có ranh giới</span>' : '';
@@ -1034,8 +1077,9 @@ function showList() {
   });
   if (items.length > 300) h += `<p class="muted">Đang hiện 300/${items.length} lô. Gõ thêm để lọc.</p>`;
   $('#panelBody').innerHTML = h;
-  $('#panelBody').querySelectorAll('.item').forEach(el => el.addEventListener('click', () => select(el.dataset.id)));
+  $('#panelBody').querySelectorAll('.item[data-id]').forEach(el => el.addEventListener('click', () => select(el.dataset.id)));
   if ($('#btnLogout')) $('#btnLogout').onclick = logout;
+  if (qll) $('#qGo').onclick = () => { goCoord(qll); if (isMobile()) setSheet('peek'); };
 }
 
 // ---------- Chi tiết lô + hộ ----------
@@ -2799,6 +2843,15 @@ async function submitNew() {
 
 // ---------- Sự kiện ----------
 $('#q').addEventListener('focus', () => { if (isMobile()) setSheet('full'); });
+$('#q').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !DATA) return;
+  const ll = coordQuery($('#q').value);
+  if (!ll) return;
+  e.preventDefault();
+  $('#q').blur();
+  goCoord(ll);
+  if (isMobile()) setSheet('peek');
+});
 $('#q').addEventListener('input', () => {
   if (!DATA || hasUnsaved()) return;
   if (sel) { sel = null; renderLayers(); }
