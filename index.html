@@ -339,7 +339,7 @@
 const FOCUS_ID = new URLSearchParams(location.search).get('lo') || '';
 
 // ---------- Trạng thái ----------
-let DATA = null;            // { ho:{headers, rows:{MaHo: farm}}, lo:{headers, rows:[plot]}, user, cfg }
+let DATA = null, dataVer = null;            // { ho:{headers, rows:{MaHo: farm}}, lo:{headers, rows:[plot]}, user, cfg }
 let C = null;               // DATA.cfg
 let byId = {};              // MaLo -> lô
 let layerById = {};
@@ -762,6 +762,7 @@ function renderChips() {
 // Đưa một bộ dữ liệu (từ máy chủ hoặc từ bộ nhớ máy) lên bản đồ
 function applyData(d, keepView) {
   DATA = d;
+  if (d.ver) dataVer = d.ver;
   C = DATA.cfg;
   // Đổi nhãn hiển thị trên bản đồ (không đổi tên cột trong Sheet)
   Object.values(C.fields || {}).forEach(list => Array.isArray(list) && list.forEach(m => {
@@ -791,7 +792,7 @@ async function load(keepView, background) {
   try {
     const d = await call('getData');
     const sig = hashStr(JSON.stringify(d));
-    if (DATA && sig === dataSig) { cacheShownAt = 0; return; }
+    if (DATA && sig === dataSig) { cacheShownAt = 0; if (d.ver) { dataVer = d.ver; DATA.ver = d.ver; } return; }
     if (background && (hasUnsaved() || savesPending || !$('#modal').hidden)) return;
     cache.put(d, sig);          // lưu bản gốc từ máy chủ trước khi áp dụng
     dataSig = sig;
@@ -2883,10 +2884,32 @@ $('#mCancel').onclick = closeModal;
 $('#mClose').onclick = closeModal;
 window.addEventListener('beforeunload', e => { if (hasUnsaved()) { e.preventDefault(); e.returnValue = ''; } });
 
-// Tự làm mới mỗi 2 phút để thấy thay đổi của người khác (khi không đang sửa)
-setInterval(() => {
-  if (DATA && !hasUnsaved() && !savesPending && $('#modal').hidden && document.visibilityState === 'visible') load(true);
-}, 120000);
+// ---------- Đồng bộ với tài khoản khác ----------
+// Mỗi ~20 giây hỏi máy chủ "dữ liệu có đổi không?" (rất nhẹ); chỉ tải lại khi có thay đổi.
+// Quay lại app / bật màn hình / có mạng lại: hỏi ngay. Không làm mới khi đang sửa dở.
+let pingBusy = false, lastPing = 0, pingOk = true, lastFull = Date.now();
+const SYNC_MS = 20000;
+const canSync = () => DATA && !hasUnsaved() && !savesPending && $('#modal').hidden && document.visibilityState === 'visible';
+async function syncCheck(force) {
+  if (!canSync() || pingBusy) return;
+  if (!force && Date.now() - lastPing < SYNC_MS - 2000) return;
+  pingBusy = true; lastPing = Date.now();
+  try {
+    if (!pingOk) {                                     // máy chủ chưa có "ping": tải lại toàn bộ mỗi 2 phút như cũ
+      if (force || Date.now() - lastFull > 120000) { lastFull = Date.now(); await load(true, true); }
+      return;
+    }
+    const r = await call('ping');
+    const v = r && r.v;
+    if (v && v !== dataVer && canSync()) { await load(true, true); if (!dataVer) dataVer = v; }
+  } catch (e) {
+    if (/ping/.test(String(e && e.message || e))) pingOk = false;
+  } finally { pingBusy = false; }
+}
+setInterval(() => syncCheck(false), SYNC_MS);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncCheck(true); });
+window.addEventListener('focus', () => syncCheck(false));
+window.addEventListener('online', () => syncCheck(true));
 
 boot();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
