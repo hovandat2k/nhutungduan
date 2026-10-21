@@ -1693,7 +1693,10 @@ async function saveInd() {
     Object.assign(d.values, props);
     d.version = r.version || d.version; d.by = DATA.user.name || DATA.user.email;
     Object.keys(props).forEach(c => {             // thêm giá trị mới vào danh sách lựa chọn
-      const o = d.options[c]; if (o && props[c] && !o.includes(props[c])) o.push(props[c]);
+      const fd = d.fields.find(x => x.col === c);
+      if (!fd || fd.qty || !props[c]) return;
+      const o = d.options[c] || (d.options[c] = []);
+      if (!o.includes(props[c])) o.push(props[c]);
     });
     IND.dirty = {};
     if (r.farm && farms()[farmId]) farms()[farmId] = Object.assign({}, farms()[farmId], { props: Object.assign({}, farms()[farmId].props, r.farm.props), version: r.farm.version });
