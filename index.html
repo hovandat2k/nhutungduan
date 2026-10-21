@@ -302,10 +302,11 @@
     <button id="btnMenu" title="Bộ lọc và công cụ" aria-label="Menu"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg></button>
     <div id="chips"></div>
     <div id="busy"></div>
-    <button id="btnImport" class="tool" title="Nhập ranh giới từ file KML/KMZ">⬆ <span class="btxt">Nhập KML</span></button>
-    <button id="btnExport" class="tool" title="Tải file GMR / BPM / KML của từng chứng nhận" hidden>⬇ <span class="btxt">Download</span></button>
+    <button id="btnImport" class="tool" title="Upload ranh giới (KML/KMZ) hoặc Indicators (Excel)">⬆ <span class="btxt">Upload</span></button>
+    <button id="btnExport" class="tool" title="Tải file GMR / BPM / KML / Indicators" hidden>⬇ <span class="btxt">Download</span></button>
     <button id="btnReload" class="tool" title="Tải lại dữ liệu mới nhất">⟳ <span class="btxt mob">Tải lại</span></button>
     <input id="file" type="file" accept=".kml,.kmz" hidden>
+    <input id="fileInd" type="file" accept=".xlsx,.xls,.xlsm" hidden>
   </div>
   <div id="mapWrap"><div id="map"></div><div id="gps" hidden></div><div id="geoBar" hidden><span class="lbl">Diện tích</span><b id="geoArea">—</b><button type="button" id="geoUndo" title="Hoàn tác thao tác vừa rồi">↶ Quay lại</button></div></div>
   <aside id="panel" data-state="half"><div id="grab" title="Kéo lên / xuống"></div><div id="panelBody"><p class="muted">Đang tải dữ liệu…</p></div></aside>
@@ -2049,20 +2050,108 @@ async function readKmlFile(f) {
   return f.text();
 }
 
+// ---------- Upload Indicators (.xlsx theo mẫu "Bảng thu thập thông tin chỉ số") ----------
+const IND_COLS = ['CB_SoLoai', 'CB_SoLuong', 'TT_SoLan', 'TT_LuongNuoc', 'TT_LuongDau', 'TT_PhuongPhap', 'TT_NguonNuoc',
+  'CBien_PhuongPhap', 'CBien_NangLuong', 'TV_Loai', 'TV_PhanTram', 'TTNB_XacNhan', 'HC_Loai', 'HC_Luong', 'HC_TuSX',
+  'VC1_Loai', 'VC1_Luong', 'VC2_Loai', 'VC2_Luong', 'VC3_Loai', 'VC3_Luong', 'VC4_Loai', 'VC4_Luong', 'VCN_Loai', 'VCN_Luong',
+  'BV_DietCo', 'BV_DietCo_Luong', 'BV_TruSau', 'BV_TruSau_Luong', 'BV_DietNam', 'BV_DietNam_Luong',
+  'BV_DietChuot', 'BV_DietChuot_Luong', 'BV_Khac', 'BV_Khac_Luong'];
+function indCell(v) {
+  if (v == null) return '';
+  if (typeof v === 'number') v = Number.isInteger(v) ? String(v) : String(+v.toFixed(6));
+  const s = String(v).replace(/\s+/g, ' ').trim();
+  return /^[_–—]$/.test(s) ? '-' : s;
+}
+// Đọc file: tìm dòng tiêu đề có "Mã vườn" và dòng có "Số loài cây che bóng" → 35 cột chỉ số liền nhau từ đó.
+function parseIndicatorsSheet(aoa) {
+  const norm = x => foldVN(x == null ? '' : x).replace(/\s+/g, ' ').trim();
+  let hRow = -1, cCode = -1, sRow = -1, cStart = -1;
+  for (let r = 0; r < Math.min(aoa.length, 15); r++) {
+    const row = aoa[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const t = norm(row[c]);
+      if (cCode < 0 && (t === 'ma vuon' || t === 'ma ho' || t === 'maho')) { hRow = r; cCode = c; }
+      if (cStart < 0 && /^so loai cay che bong/.test(t)) { sRow = r; cStart = c; }
+    }
+  }
+  if (cCode < 0) throw new Error('Không thấy cột "Mã vườn" trong file.');
+  if (cStart < 0) throw new Error('Không thấy cột "Số loài cây che bóng trên vườn" – file không đúng mẫu Indicators.');
+  const rows = [];
+  for (let r = Math.max(hRow, sRow) + 1; r < aoa.length; r++) {
+    const row = aoa[r] || [];
+    const code = indCell(row[cCode]);
+    if (!code) continue;
+    const values = {};
+    IND_COLS.forEach((k, i) => { const v = indCell(row[cStart + i]); if (v) values[k] = v; });
+    rows.push({ code, values });
+  }
+  if (!rows.length) throw new Error('File không có dòng dữ liệu nào có Mã vườn.');
+  return rows;
+}
+async function uploadIndicators(f) {
+  $('#mBody').innerHTML = `<p class="muted">Đang đọc <b>${esc(f.name)}</b>…</p>`;
+  busy(true);
+  let rows, r;
+  try {
+    await loadScript_('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js', 'XLSX');
+    const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    let err = null;
+    for (const n of wb.SheetNames) {                    // sheet đầu tiên đúng mẫu
+      try { rows = parseIndicatorsSheet(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null })); break; }
+      catch (e) { err = err || e; }
+    }
+    if (!rows) throw err || new Error('File trống.');
+    r = await call('importIndicators', rows, true);
+  } catch (e) {
+    busy(false);
+    $('#mBody').innerHTML = `<p class="err">Không đọc được file Indicators: ${esc(e.message || e)}</p>`;
+    return;
+  }
+  busy(false);
+  const list = (t, a) => a.length ? `<details><summary>${t}: <b>${a.length}</b></summary><p class="muted">${a.map(esc).join(', ')}</p></details>` : '';
+  $('#mTitle').textContent = 'Upload Indicators';
+  $('#mBody').innerHTML = `<div class="dl"><p><b>${esc(f.name)}</b> · ${r.total} dòng</p>
+    <p>Sẽ cập nhật <b>${r.changedFarms}</b> hộ (${r.changedCells} ô${r.newFarms ? `, ${r.newFarms} hộ chưa có Indicators` : ''}); <b>${r.same}</b> hộ không thay đổi.</p>` +
+    list('Mã không tìm thấy trong dữ liệu', r.notFound) + list('Hộ không tham gia RA (bỏ qua)', r.notRA) +
+    list('Hộ ngoài vùng phụ trách (bỏ qua)', r.noRight) + list('Dòng trùng mã (lấy dòng đầu)', r.dup) +
+    (r.changes.length ? `<details><summary>Danh sách hộ thay đổi</summary><p class="muted">${r.changes.map(c => `${esc(c.id)} (${c.cells})`).join(', ')}${r.changedFarms > r.changes.length ? '…' : ''}</p></details>` : '') +
+    `<p class="muted">Ô trống trong file giữ nguyên giá trị cũ. Giá trị cũ được sao lưu vào sheet LichSu.</p>
+    <div class="actions"><button type="button" class="primary" id="indGo"${r.changedFarms ? '' : ' disabled'}>Nhập ${r.changedFarms} hộ</button>
+    <button type="button" id="indNo">Hủy</button></div></div>`;
+  $('#indNo').onclick = closeModal;
+  $('#indGo').onclick = async () => {
+    $('#indGo').disabled = true; $('#indGo').textContent = '⏳ Đang nhập…';
+    busy(true);
+    try {
+      const d = await call('importIndicators', rows, false);
+      IND.data = {};                                      // bảng Indicators đang mở sẽ tải lại
+      closeModal();
+      toast(`Đã nhập Indicators cho ${d.changedFarms} hộ (${d.changedCells} ô) ✓`, 6000);
+      await load(true);
+    } catch (e) {
+      toast('Lỗi khi nhập Indicators: ' + (e.message || e), 9000);
+      $('#indGo').disabled = false; $('#indGo').textContent = `Nhập ${r.changedFarms} hộ`;
+    } finally { busy(false); }
+  };
+}
+
 // ---------- Download: GMR (RA) / BPM (4C) / KML theo từng chứng nhận ----------
 const DL_ITEMS = [
   ['RA', [['xlsx', 'GMR (.xlsx)'], ['kml', 'KML']]],
   ['4C1', [['xlsx', 'BPM (.xlsx)'], ['kml', 'KML']]],
   ['4C2', [['xlsx', 'BPM (.xlsx)'], ['kml', 'KML']]],
-  ['4C3', [['xlsx', 'BPM (.xlsx)'], ['kml', 'KML']]]
+  ['4C3', [['xlsx', 'BPM (.xlsx)'], ['kml', 'KML']]],
+  ['IND', [['xlsx', 'Indicators (.xlsx)']]]
 ];
 function doExport() {
   if (!confirmDiscard()) return;
   $('#bar').classList.remove('open');
-  const count = k => DATA.lo.rows.filter(p => progsOf(p).includes(k)).length;
+  const count = k => k === 'IND'
+    ? Object.values(farms()).filter(f => f.props.RA === true).length + ' hộ RA'
+    : DATA.lo.rows.filter(p => progsOf(p).includes(k)).length + ' lô';
   openModal('Download', `<div class="dl">` + DL_ITEMS.map(([k, opts]) =>
-    `<div class="dl-row"><div class="dl-t"><span class="dot" style="background:${PROG_COLOR[k] || NONE_COLOR}"></span><b>${esc(k)}</b>
-      <span class="muted">${count(k)} lô</span></div><div class="dl-b">` +
+    `<div class="dl-row"><div class="dl-t"><span class="dot" style="background:${k === 'IND' ? '#8d6e63' : (PROG_COLOR[k] || NONE_COLOR)}"></span><b>${k === 'IND' ? 'Indicators' : esc(k)}</b>
+      <span class="muted">${count(k)}</span></div><div class="dl-b">` +
     opts.map(([kind, label]) => `<button type="button" data-dl="${k}|${kind}">⬇ ${esc(label)}</button>`).join('') +
     `</div></div>`).join('') +
     `<p class="muted" id="dlMsg">File được tạo từ dữ liệu mới nhất trong Sheet và lưu thẳng về máy của bạn. ` +
@@ -2084,7 +2173,7 @@ function dlStamp() {
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}`;
 }
 function guessName(code, kind) {
-  return (kind === 'kml' ? `Polygon_${code}` : (code === 'RA' ? 'GMR_RA' : `BPM_${code}`)) + `_${dlStamp()}.${kind}`;
+  return (kind === 'kml' ? `Polygon_${code}` : (code === 'IND' ? 'Indicators_RA' : code === 'RA' ? 'GMR_RA' : `BPM_${code}`)) + `_${dlStamp()}.${kind}`;
 }
 // Tải thường: trình duyệt lưu vào thư mục Tải xuống (hoặc hỏi nơi lưu nếu đã bật "Hỏi nơi lưu").
 function saveBlob(name, blob) {
@@ -2118,7 +2207,7 @@ async function downloadOne(btn, code, kind) {
   try {
     const r = await call('downloadFile', code, kind, { drive: false });
     const blob = b64Blob(r.data, r.mime);
-    const info = `(${r.farms} hộ · ${r.plots} lô)`;
+    const info = code === 'IND' ? `(${r.farms} hộ RA, ${r.plots} hộ có Indicators)` : `(${r.farms} hộ · ${r.plots} lô)`;
     if (handle) {
       const w = await handle.createWritable(); await w.write(blob); await w.close();
       $('#dlMsg').innerHTML = `Đã lưu <b>${esc(handle.name)}</b> ${info} vào thư mục bạn chọn.`;
@@ -2984,9 +3073,18 @@ $('#btnImport').onclick = () => {
   if (!DATA) return;
   if (!DATA.user.canEdit) { toast('Tài khoản của bạn chỉ có quyền xem.'); return; }
   if (!confirmDiscard()) return;
-  $('#file').value = '';
-  $('#file').click();
+  $('#bar').classList.remove('open');
+  openModal('Upload', `<div class="dl">
+    <div class="dl-row"><div class="dl-t"><b>KML / KMZ</b><span class="muted">ranh giới lô (polygon)</span></div>
+      <div class="dl-b"><button type="button" id="upKml">⬆ KML</button></div></div>
+    <div class="dl-row"><div class="dl-t"><b>Indicators</b><span class="muted">file Excel theo mẫu "Bảng thu thập thông tin chỉ số"</span></div>
+      <div class="dl-b"><button type="button" id="upInd">⬆ Indicators</button></div></div>
+    <p class="muted">Indicators: mỗi dòng nhận theo cột <b>Mã vườn</b> (mã hộ, hoặc mã lô thì lấy hộ của lô), chỉ nhập cho hộ RA. Ô trống trong file giữ nguyên giá trị đang có. Trước khi ghi sẽ hiện bảng xem trước.</p></div>`, false);
+  // Mở hộp chọn file ngay trong lần bấm (trình duyệt chỉ cho mở khi người dùng vừa bấm)
+  $('#upKml').onclick = () => { closeModal(); $('#file').value = ''; $('#file').click(); };
+  $('#upInd').onclick = () => { $('#fileInd').value = ''; $('#fileInd').click(); };
 };
+$('#fileInd').addEventListener('change', e => { const f = e.target.files[0]; if (f) uploadIndicators(f); });
 $('#file').addEventListener('change', async e => {
   const f = e.target.files[0];
   if (!f) return;
