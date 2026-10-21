@@ -207,6 +207,10 @@
   .more-btn { width: 100%; margin: 6px 0 10px; background: var(--bg); color: var(--accent); font-weight: 600; }
   .grp { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px 2px; margin: 10px 0; }
   .grp-t { font-weight: 600; padding: 9px 0; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+  #indBox { border: 2px solid var(--accent); border-radius: 10px; padding: 4px 10px 10px; margin: 10px 0; }
+  #indBox h3 { margin: 8px 0 4px; font-size: 16px; }
+  #indBox .ind-other { margin-top: 4px; }
+  button.ind-on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .lastedit { margin: -2px 0 10px; font-size: 13px; line-height: 1.4; }
   .plabel { background: none; border: 0; }
   .plabel span { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; color: #fff; font: 600 12px/1.2 system-ui, sans-serif;
@@ -346,6 +350,7 @@ let layerById = {};
 let sel = null;
 let dirtyLo = {}, dirtyHo = {};
 let geomEdit = null, geomChanged = false, geomRemoved = false;
+let IND = { open: false, farm: null, data: {}, dirty: {}, loading: false };   // bảng Indicators (hộ RA)
 let PT = null;                       // { marker } khi đang sửa vị trí điểm (Sửa Point)
 let importLayer = null, importItems = [];
 let firstLoad = true;
@@ -1085,7 +1090,8 @@ function showList() {
 
 // ---------- Chi tiết lô + hộ ----------
 function hasUnsaved() {
-  return Object.keys(dirtyLo).length > 0 || Object.keys(dirtyHo).length > 0 || !!geomEdit || !!PT || geomRemoved || !!NEW;
+  return Object.keys(dirtyLo).length > 0 || Object.keys(dirtyHo).length > 0 || !!geomEdit || !!PT || geomRemoved || !!NEW
+    || Object.keys(IND.dirty).length > 0;
 }
 
 function confirmDiscard() {
@@ -1416,8 +1422,13 @@ function showPlot(id, zoom) {
       ${!p.geometry && pointOf(p) ? '<button id="ptEdit">✎ Sửa Point</button>' : ''}
       <button id="gEdit">${p.geometry ? '✎ Sửa Polygon' : '✎ Vẽ Polygon'}</button>
       ${p.geometry ? '<button id="gDel" class="danger">Xóa Polygon</button>' : pointOf(p) ? '<button id="pDel" class="danger">Xóa Point</button>' : '<button id="pDel" class="danger">Xóa lô</button>'}
+      ${f && progsOf(p).includes('RA') ? `<button id="indBtn" type="button"${IND.open ? ' class="ind-on"' : ''}>📋 Indicators</button>` : ''}
     </div><p class="hint" id="gHint" hidden></p>`;
+  } else if (f && progsOf(p).includes('RA')) {
+    h += `<div class="row"><button id="indBtn" type="button"${IND.open ? ' class="ind-on"' : ''}>📋 Indicators</button></div>`;
   }
+  if (!f || IND.farm !== f.id) { IND.open = false; IND.farm = f ? f.id : null; IND.dirty = {}; }
+  h += `<div id="indWrap"></div>`;
   h += `<div id="checks"></div>` + lastEditHtml(p, f);
 
   if (f) {
@@ -1447,6 +1458,8 @@ function showPlot(id, zoom) {
   $('#panelBody').innerHTML = h;
   renderChecks();
   initPhotos(p.id);
+  if ($('#indBtn')) $('#indBtn').onclick = () => toggleInd(f.id);
+  if (IND.open && f && IND.farm === f.id) renderInd();
 
   $('#back').onclick = () => { if (confirmDiscard()) { sel = null; renderLayers(); showList(); } };
   $('#btnMore').onclick = () => {
@@ -1590,6 +1603,109 @@ function stopPointEdit() {
   PT = null;
 }
 
+// ---------- Indicators (chỉ số RA của hộ, sheet ChiSo) ----------
+async function toggleInd(farmId) {
+  if (IND.open) {
+    if (Object.keys(IND.dirty).length && !confirm('Bỏ các thay đổi Indicators chưa lưu?')) return;
+    IND.open = false; IND.dirty = {};
+    $('#indWrap').innerHTML = ''; $('#indBtn').classList.remove('ind-on');
+    updateButtons();
+    return;
+  }
+  IND.open = true; IND.farm = farmId; IND.dirty = {};
+  $('#indBtn').classList.add('ind-on');
+  if (!IND.data[farmId]) {
+    $('#indWrap').innerHTML = '<div id="indBox"><p class="muted">Đang tải Indicators…</p></div>';
+    try { IND.data[farmId] = await call('getIndicators', farmId); }
+    catch (e) { $('#indWrap').innerHTML = `<div id="indBox"><p class="err">Không tải được Indicators: ${esc(e.message || e)}</p></div>`; return; }
+    if (!IND.open || IND.farm !== farmId) return;
+  }
+  renderInd();
+  setTimeout(() => { const b = $('#indBox'); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
+}
+const IND_OTHER = '__khac__';
+function renderInd() {
+  const d = IND.data[IND.farm];
+  if (!d || !$('#indWrap')) return;
+  const ro = !DATA.user.canEdit;
+  const val = col => Object.prototype.hasOwnProperty.call(IND.dirty, col) ? IND.dirty[col] : (d.values[col] ?? '');
+  const groups = [];
+  d.fields.forEach(fd => { let g = groups.find(x => x.name === fd.group); if (!g) groups.push(g = { name: fd.group, items: [] }); g.items.push(fd); });
+  let h = `<div id="indBox"><h3>📋 Indicators – ${esc(IND.farm)}</h3>`;
+  if (d.version) h += `<div class="muted">Cập nhật: ${esc(d.by || '')} · ${esc(d.version)}</div>`;
+  else if (!Object.keys(d.values).length) h += `<div class="muted">Hộ này chưa có dữ liệu Indicators.</div>`;
+  groups.forEach(g => {
+    h += `<div class="grp"><div class="grp-t">${esc(g.name)}</div>`;
+    g.items.forEach(fd => {
+      const v = String(val(fd.col)), id = 'ind_' + fd.col, ch = Object.prototype.hasOwnProperty.call(IND.dirty, fd.col) ? ' changed' : '';
+      h += `<div class="field${ch}"><label for="${id}">${esc(fd.label)}</label>`;
+      if (fd.qty) {
+        h += `<input type="text" id="${id}" data-ind="${esc(fd.col)}" inputmode="decimal" value="${esc(v)}"${ro ? ' readonly' : ''}>`;
+      } else {
+        const opts = (d.options[fd.col] || []).slice();
+        const inList = v === '' || opts.some(o => o === v);
+        h += `<select id="${id}" data-ind="${esc(fd.col)}"${ro ? ' disabled' : ''}><option value="">— chưa chọn —</option>` +
+          opts.map(o => `<option value="${esc(o)}"${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('') +
+          `<option value="${IND_OTHER}"${inList ? '' : ' selected'}>✎ Khác (tự nhập)…</option></select>` +
+          `<input type="text" class="ind-other" data-ind-other="${esc(fd.col)}" placeholder="Nhập giá trị khác" value="${inList ? '' : esc(v)}"${inList ? ' hidden' : ''}${ro ? ' readonly' : ''}>`;
+      }
+      h += `</div>`;
+    });
+    h += `</div>`;
+  });
+  if (!ro) h += `<div class="actions"><button id="indSave" class="primary" disabled>Lưu Indicators</button><button id="indCancel">Đóng</button></div>`;
+  h += `</div>`;
+  $('#indWrap').innerHTML = h;
+  const box = $('#indBox');
+  const mark = (col, v, el) => {
+    if (String(v).trim() === String(d.values[col] ?? '').trim()) delete IND.dirty[col]; else IND.dirty[col] = String(v).trim();
+    el.closest('.field').classList.toggle('changed', Object.prototype.hasOwnProperty.call(IND.dirty, col));
+    if ($('#indSave')) $('#indSave').disabled = !Object.keys(IND.dirty).length;
+    updateButtons();
+  };
+  box.querySelectorAll('input[data-ind]').forEach(el => el.addEventListener('input', () => mark(el.dataset.ind, el.value, el)));
+  box.querySelectorAll('select[data-ind]').forEach(el => el.addEventListener('change', () => {
+    const other = box.querySelector(`[data-ind-other="${el.dataset.ind}"]`);
+    if (el.value === IND_OTHER) { other.hidden = false; other.focus(); mark(el.dataset.ind, other.value, el); }
+    else { other.hidden = true; mark(el.dataset.ind, el.value, el); }
+  }));
+  box.querySelectorAll('input[data-ind-other]').forEach(el => el.addEventListener('input', () => mark(el.dataset.indOther, el.value, el)));
+  if ($('#indSave')) {
+    $('#indSave').disabled = !Object.keys(IND.dirty).length;
+    $('#indSave').onclick = saveInd;
+    $('#indCancel').onclick = () => toggleInd(IND.farm);
+  }
+}
+async function saveInd() {
+  const farmId = IND.farm, d = IND.data[farmId], props = Object.assign({}, IND.dirty);
+  if (!Object.keys(props).length) return;
+  $('#indSave').disabled = true;
+  busy(true);
+  try {
+    const r = await call('saveIndicators', farmId, props, d.version || '');
+    if (r && r.conflict) {
+      toast(`Indicators của hộ ${farmId} vừa được ${r.by || 'người khác'} sửa lúc ${r.at}. Đang tải bản mới…`, 7000);
+      IND.data[farmId] = await call('getIndicators', farmId);
+      IND.dirty = {};
+      renderInd();
+      return;
+    }
+    Object.assign(d.values, props);
+    d.version = r.version || d.version; d.by = DATA.user.name || DATA.user.email;
+    Object.keys(props).forEach(c => {             // thêm giá trị mới vào danh sách lựa chọn
+      const o = d.options[c]; if (o && props[c] && !o.includes(props[c])) o.push(props[c]);
+    });
+    IND.dirty = {};
+    if (r.farm && farms()[farmId]) farms()[farmId] = Object.assign({}, farms()[farmId], { props: Object.assign({}, farms()[farmId].props, r.farm.props), version: r.farm.version });
+    toast('Đã lưu Indicators ✓', 2500);
+    dataSig = null;
+    if (sel) showPlot(sel, false); else renderInd();
+  } catch (e) {
+    toast('Không lưu được Indicators: ' + (e.message || e), 8000);
+    if ($('#indSave')) $('#indSave').disabled = false;
+  } finally { busy(false); }
+}
+
 // Xóa point/polygon = xóa hẳn cả lô (dòng trong sheet Lo; bản sao lưu ở LichSu)
 function removeGeom() { deletePlotUI(sel); }
 function removePoint() { deletePlotUI(sel); }
@@ -1647,6 +1763,7 @@ function stopGeomTools() {
 
 function cancelEdit(silent) {
   stopGeomTools();
+  IND.dirty = {};
   dirtyLo = {}; dirtyHo = {};
   renderLayers();
   if (!silent && sel) showPlot(sel, false);
